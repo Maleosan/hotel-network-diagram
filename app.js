@@ -246,11 +246,12 @@ function applyLinkAppearance(line,link){
 
     const appearance=getLinkAppearance(link);
 
-    line.setAttribute("stroke",appearance.color);
-    line.setAttribute("stroke-width",appearance.width);
-    line.setAttribute("stroke-opacity",appearance.opacity);
-    line.setAttribute("stroke-dasharray",getLinkDashArray(appearance));
-    line.setAttribute("stroke-linecap",appearance.style==="dotted" ? "round" : "butt");
+    // Inline styles intentionally override the default `.link` CSS rule.
+    line.style.stroke=appearance.color;
+    line.style.strokeWidth=String(appearance.width);
+    line.style.strokeOpacity=String(appearance.opacity);
+    line.style.strokeDasharray=getLinkDashArray(appearance);
+    line.style.strokeLinecap=appearance.style==="dotted" ? "round" : "butt";
 
 }
 
