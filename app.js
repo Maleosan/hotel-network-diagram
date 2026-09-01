@@ -17,6 +17,7 @@ let selectedNode = null;
 let dragging = null;
 let dragStartPosition = null;
 let draggingPointerId = null;
+let didDrag = false;
 
 let offsetX = 0;
 let offsetY = 0;
@@ -44,6 +45,14 @@ const GRID_SIZE = 20;
 
 let gridEnabled = true;
 let snapEnabled = true;
+let diagramName = "HOTEL NETWORK DIAGRAM";
+let theme = "dark";
+const DEVICE_TYPES = new Set(["router","switch","ap","pc","nas","camera","dvr","pabx","cloud"]);
+const DEFAULT_PORTS = {router:5,switch:24,ap:1,pc:1,nas:2,camera:1,dvr:16,pabx:8,cloud:0};
+
+function uniqueId(prefix){
+    return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+}
 
 /* ==========================================================
    DATA
@@ -179,16 +188,24 @@ function normalizeLink(link){
     if(Array.isArray(link)){
 
         return{
+            id:uniqueId("link"),
             from:link[0],
             to:link[1],
+            sourcePort:null,
+            targetPort:null,
+            label:"",
             appearance:createDefaultLinkAppearance()
         };
 
     }
 
     return{
+        id:typeof link.id==="string" && link.id ? link.id : uniqueId("link"),
         from:link.from || link[0],
         to:link.to || link[1],
+        sourcePort:Number.isInteger(Number(link.sourcePort)) ? Number(link.sourcePort) : null,
+        targetPort:Number.isInteger(Number(link.targetPort)) ? Number(link.targetPort) : null,
+        label:typeof link.label==="string" ? link.label.slice(0,80) : "",
         appearance:{
             ...createDefaultLinkAppearance(),
             ...(link.appearance || link.style || {})
@@ -252,7 +269,8 @@ function cloneDiagramState(){
     return{
 
         nodes:nodes.map(node=>({...node})),
-        links:links.map(cloneLink)
+        links:links.map(cloneLink),
+        diagramName
 
     };
 
@@ -275,12 +293,15 @@ function restoreDiagramState(state,shouldPersist=true){
         links.push(cloneLink(link));
 
     });
+    diagramName=state.diagramName || diagramName;
+    document.getElementById("diagramName").value=diagramName;
 
     selectedNode=null;
     selectedElement=null;
     selectedLink=null;
     contextTarget=null;
     linkMode=false;
+    document.getElementById("btnCancelLink").hidden=true;
     firstLinkNode=null;
 
     render();
@@ -406,6 +427,24 @@ function updateToggleButton(button,isActive){
 
 }
 
+function showFeedback(message,isError=false){
+    const bar=document.getElementById("statusBar");
+    bar.textContent=message;
+    bar.style.color=isError ? "#ff8a80" : "";
+    clearTimeout(showFeedback.timer);
+    showFeedback.timer=setTimeout(()=>{bar.textContent="Ready";bar.style.color="";},4000);
+}
+
+function isEditingTarget(target){
+    return target && (target.matches("input,textarea,select") || target.isContentEditable);
+}
+
+function cancelLinkMode(){
+    linkMode=false; firstLinkNode=null;
+    document.getElementById("btnCancelLink").hidden=true;
+    showFeedback("Link mode dibatalkan");
+}
+
 function updateLayoutTools(){
 
     if(gridLayer){
@@ -429,6 +468,7 @@ function resetView(){
     viewX=0;
     viewY=0;
     updateView();
+    saveToLocalStorage();
 
 }
 
@@ -441,6 +481,23 @@ function render(){
 
     nodes.forEach(drawNode);
 
+}
+
+function getPortCount(node){
+    const value=Number(node && node.portCount);
+    return Number.isInteger(value) && value>=0 ? value : (DEFAULT_PORTS[node?.type] || 0);
+}
+
+function isPortUsed(nodeId,port,exceptId){
+    if(!port) return false;
+    return links.some(link=>link.id!==exceptId &&
+        ((link.from===nodeId && link.sourcePort===port) || (link.to===nodeId && link.targetPort===port)));
+}
+
+function firstFreePort(nodeId,exceptId){
+    const node=nodes.find(n=>n.id===nodeId);
+    for(let port=1;port<=getPortCount(node);port++) if(!isPortUsed(nodeId,port,exceptId)) return port;
+    return null;
 }
 
 /* ==========================================================
@@ -722,6 +779,8 @@ if(node.type==="pabx"){
 
     g.addEventListener("click",function(e){
 
+    if(didDrag){ didDrag=false; return; }
+
     selectedElement=g;
 
     selectNode(e);
@@ -730,14 +789,16 @@ if(node.type==="pabx"){
 g.addEventListener("contextmenu",function(e){
 
     e.preventDefault();
+    e.stopPropagation();
 
     contextTarget=node;
 
     contextMenu.style.display="block";
 
-    contextMenu.style.left=e.pageX+"px";
-
-    contextMenu.style.top=e.pageY+"px";
+    const left=Math.min(e.clientX,window.innerWidth-160);
+    const top=Math.min(e.clientY,window.innerHeight-120);
+    contextMenu.style.left=Math.max(0,left)+"px";
+    contextMenu.style.top=Math.max(0,top)+"px";
 
 });
 nodesLayer.appendChild(g);
@@ -770,10 +831,7 @@ function deleteSelectedLink(){
 
     if(!selectedLink) return;
 
-    const idx=links.findIndex(link=>
-        link.from===selectedLink.from &&
-        link.to===selectedLink.to
-    );
+    const idx=links.findIndex(link=>link.id===selectedLink.id);
 
     if(idx>=0){
 
@@ -788,9 +846,9 @@ function deleteSelectedLink(){
 
 }
 
-function selectLinkByEndpoints(from,to){
+function selectLinkById(id){
 
-    selectedLink=links.find(link=>link.from===from && link.to===to);
+    selectedLink=links.find(link=>link.id===id);
 
     if(!selectedLink) return;
 
@@ -804,7 +862,11 @@ function selectLinkByEndpoints(from,to){
 
     const appearance=getLinkAppearance(selectedLink);
 
-    document.getElementById("propLinkName").value=`${getNodeLabel(from)} → ${getNodeLabel(to)}`;
+    document.getElementById("propLinkName").value=`${getNodeLabel(selectedLink.from)}${selectedLink.sourcePort?` [P${selectedLink.sourcePort}]`:""} → ${getNodeLabel(selectedLink.to)}${selectedLink.targetPort?` [P${selectedLink.targetPort}]`:""}`;
+    document.getElementById("propLinkLabel").value=selectedLink.label || "";
+    document.getElementById("propLabelFollowsLine").checked=appearance.labelFollowsLine!==false;
+    populatePortSelect("propSourcePort",selectedLink.from,selectedLink.sourcePort,selectedLink.id);
+    populatePortSelect("propTargetPort",selectedLink.to,selectedLink.targetPort,selectedLink.id);
     document.getElementById("propLinkColor").value=appearance.color;
     document.getElementById("propLinkWidth").value=appearance.width;
     document.getElementById("propLinkStyle").value=appearance.style;
@@ -813,6 +875,19 @@ function selectLinkByEndpoints(from,to){
     showLinkProperties();
     render();
 
+}
+
+function populatePortSelect(id,nodeId,current,linkId){
+    const select=document.getElementById(id);
+    const node=nodes.find(n=>n.id===nodeId);
+    select.innerHTML='<option value="">Automatic / none</option>';
+    for(let port=1;port<=getPortCount(node);port++){
+        if(!isPortUsed(nodeId,port,linkId) || port===current){
+            const option=document.createElement("option");
+            option.value=port; option.textContent=`Port ${port}`; select.appendChild(option);
+        }
+    }
+    select.value=current || "";
 }
 function drawCloud(icon){
 
@@ -906,14 +981,13 @@ function drawLinks(){
         hit.setAttribute("stroke-width","16");
         hit.style.pointerEvents="stroke";
 
-        hit.dataset.from=link.from;
-        hit.dataset.to=link.to;
+        hit.dataset.linkId=link.id;
 
         hit.addEventListener("click",function(e){
 
             e.stopPropagation();
 
-            selectLinkByEndpoints(this.dataset.from,this.dataset.to);
+            selectLinkById(this.dataset.linkId);
 
         });
 
@@ -931,7 +1005,7 @@ function drawLinks(){
         line.dataset.to=link.to;
         applyLinkAppearance(line,link);
 
-        if(selectedLink && selectedLink.from===link.from && selectedLink.to===link.to){
+        if(selectedLink && selectedLink.id===link.id){
 
             line.classList.add("selectedLink");
 
@@ -939,9 +1013,27 @@ function drawLinks(){
 
         linksLayer.appendChild(hit);
         linksLayer.appendChild(line);
+        drawLinkLabel(link,from,to);
 
     });
 
+}
+
+function drawLinkLabel(link,from,to){
+    if(!link.label) return;
+    const appearance=getLinkAppearance(link);
+    const text=document.createElementNS(SVGNS,"text");
+    text.classList.add("linkLabel");
+    text.textContent=link.label;
+    if(appearance.labelFollowsLine!==false){
+        const angle=Math.atan2(to.y-from.y,to.x-from.x)*180/Math.PI;
+        text.setAttribute("transform",`translate(${(from.x+to.x)/2},${(from.y+to.y)/2-7}) rotate(${angle>90||angle< -90?angle+180:angle})`);
+    }else{
+        text.setAttribute("x",(from.x+to.x)/2);
+        text.setAttribute("y",(from.y+to.y)/2-7);
+        text.setAttribute("text-anchor","middle");
+    }
+    linksLayer.appendChild(text);
 }
 
 /* ==========================================================
@@ -990,25 +1082,44 @@ if(linkMode){
 
     }
 
-    if(firstLinkNode.id!==selectedNode.id){
+    let linkError=false;
+    const firstStillExists=nodes.some(n=>n.id===firstLinkNode.id);
+    const duplicate=links.some(link=>(link.from===firstLinkNode.id && link.to===selectedNode.id) ||
+        (link.from===selectedNode.id && link.to===firstLinkNode.id));
+
+    if(firstStillExists && firstLinkNode.id!==selectedNode.id && !duplicate){
+
+        const sourcePort=firstFreePort(firstLinkNode.id);
+        const targetPort=firstFreePort(selectedNode.id);
+
+        if((getPortCount(firstLinkNode)>0 && sourcePort===null) || (getPortCount(selectedNode)>0 && targetPort===null)){
+            showFeedback("Tidak ada port kosong untuk koneksi ini",true);
+            linkError=true;
+        }else{
 
         recordHistory();
 
-        links.push(normalizeLink([
-            firstLinkNode.id,
-            selectedNode.id
-        ]));
+        links.push(normalizeLink({from:firstLinkNode.id,to:selectedNode.id,sourcePort,targetPort}));
+        }
+
+    }else if(firstLinkNode.id===selectedNode.id){
+        showFeedback("Device tidak dapat dihubungkan ke dirinya sendiri",true);
+        linkError=true;
+    }else if(duplicate){
+        showFeedback("Koneksi antara kedua device sudah ada",true);
+        linkError=true;
 
     }
 
     firstLinkNode=null;
 
     linkMode=false;
+    document.getElementById("btnCancelLink").hidden=true;
 
     render();
     saveToLocalStorage();
 
-    document.getElementById("statusBar").textContent="Ready";
+    if(!linkError) document.getElementById("statusBar").textContent="Ready";
 
     return;
 
@@ -1022,6 +1133,8 @@ if(linkMode){
 
     document.getElementById("propModel").value=
         selectedNode.model || "";
+
+    document.getElementById("propPortCount").value=getPortCount(selectedNode);
 
     document.getElementById("propLocation").value=
         selectedNode.location || "";
@@ -1043,14 +1156,23 @@ document
 
     if(!selectedNode) return;
 
+    const name=document.getElementById("propName").value.trim();
+    const ip=document.getElementById("propIP").value.trim();
+    const nextPortCount=Math.min(512,Math.max(0,Number(document.getElementById("propPortCount").value)||0));
+    if(!name){ showFeedback("Nama device tidak boleh kosong",true); return; }
+    if(ip && !isValidIP(ip)){ showFeedback("Format IP address tidak valid",true); return; }
+    if(links.some(link=>(link.from===selectedNode.id&&link.sourcePort>nextPortCount)||(link.to===selectedNode.id&&link.targetPort>nextPortCount))){
+        showFeedback("Jumlah port lebih kecil dari port yang sedang digunakan",true); return;
+    }
     const nextState=cloneDiagramState();
     const nextNode=nextState.nodes.find(node=>node.id===selectedNode.id);
 
     if(nextNode){
 
-        nextNode.text=document.getElementById("propName").value;
-        nextNode.ip=document.getElementById("propIP").value;
+        nextNode.text=name;
+        nextNode.ip=ip;
         nextNode.model=document.getElementById("propModel").value;
+        nextNode.portCount=nextPortCount;
         nextNode.location=document.getElementById("propLocation").value;
         nextNode.notes=document.getElementById("propNotes").value;
 
@@ -1062,14 +1184,15 @@ document
 
     }
 
-    selectedNode.text=
-        document.getElementById("propName").value;
+    selectedNode.text=name;
 
     selectedNode.ip=
-        document.getElementById("propIP").value;
+        ip;
 
     selectedNode.model=
         document.getElementById("propModel").value;
+
+    selectedNode.portCount=nextPortCount;
 
     selectedNode.location=
         document.getElementById("propLocation").value;
@@ -1081,12 +1204,17 @@ document
     saveToLocalStorage();
 
 };
+function isValidIP(value){
+    if(/^([a-z0-9-]+\.)+[a-z]{2,}$/i.test(value)) return true;
+    const parts=value.split(".");
+    return parts.length===4 && parts.every(part=>/^\d{1,3}$/.test(part)&&Number(part)<=255);
+}
 /* ==========================================================
    DRAG ENGINE
 ========================================================== */
 svg.addEventListener("mousedown",function(e){
 
-    if(e.button!==2) return;
+    if(e.button!==2 || e.target.closest?.(".node")) return;
 
     panMode=true;
 
@@ -1136,15 +1264,11 @@ function startDrag(e){
         x:selectedNode.x,
         y:selectedNode.y
     };
+    didDrag=false;
 
 }
 svg.addEventListener("contextmenu",function(e){
-
-    if(panMode){
-
-        e.preventDefault();
-
-    }
+    e.preventDefault();
 
 });
 svg.addEventListener("pointermove",function(e){
@@ -1169,6 +1293,8 @@ if(!dragging || e.pointerId!==draggingPointerId) return;
 
     const snappedPosition=getSnappedPosition(p.x-offsetX,p.y-offsetY);
 
+    if(Math.hypot(snappedPosition.x-dragStartPosition.x,snappedPosition.y-dragStartPosition.y)>3) didDrag=true;
+
     selectedNode.x=snappedPosition.x;
     selectedNode.y=snappedPosition.y;
 
@@ -1183,6 +1309,7 @@ if(!dragging || e.pointerId!==draggingPointerId) return;
 
 function stopDrag(e){
 
+    const wasPanning=panMode;
     panMode=false;
 
     if(e && draggingPointerId!==null && e.pointerId!==draggingPointerId) return;
@@ -1213,6 +1340,7 @@ function stopDrag(e){
     draggingPointerId=null;
     dragStartPosition=null;
     updateHistoryButtons();
+    if(wasPanning) saveToLocalStorage();
 
 }
 
@@ -1243,14 +1371,13 @@ function drawLinksOnly(){
         hit.setAttribute("stroke-width","16");
         hit.style.pointerEvents="stroke";
 
-        hit.dataset.from=link.from;
-        hit.dataset.to=link.to;
+        hit.dataset.linkId=link.id;
 
         hit.addEventListener("click",function(e){
 
             e.stopPropagation();
 
-            selectLinkByEndpoints(this.dataset.from,this.dataset.to);
+            selectLinkById(this.dataset.linkId);
 
         });
 
@@ -1267,7 +1394,7 @@ function drawLinksOnly(){
         line.dataset.to=link.to;
         applyLinkAppearance(line,link);
 
-        if(selectedLink && selectedLink.from===link.from && selectedLink.to===link.to){
+        if(selectedLink && selectedLink.id===link.id){
 
             line.classList.add("selectedLink");
 
@@ -1275,6 +1402,7 @@ function drawLinksOnly(){
 
         linksLayer.appendChild(hit);
         linksLayer.appendChild(line);
+        drawLinkLabel(link,from,to);
 
     });
 
@@ -1298,24 +1426,23 @@ function updateView(){
 
 document.addEventListener("wheel",function(e){
 
-    if(!e.ctrlKey) return;
+    if(!e.ctrlKey || !svg.contains(e.target)) return;
 
     e.preventDefault();
 
-    if(e.deltaY<0){
-
-        zoom*=1.1;
-
-    }else{
-
-        zoom/=1.1;
-
-    }
-
-    if(zoom<0.3) zoom=0.3;
-    if(zoom>4) zoom=4;
+    const rect=svg.getBoundingClientRect();
+    const px=e.clientX-rect.left;
+    const py=e.clientY-rect.top;
+    const worldX=(px-viewX)/zoom;
+    const worldY=(py-viewY)/zoom;
+    const next=Math.min(4,Math.max(.3,zoom*(e.deltaY<0?1.1:1/1.1)));
+    zoom=next;
+    viewX=px-worldX*zoom;
+    viewY=py-worldY*zoom;
 
     updateView();
+    clearTimeout(updateView.persistTimer);
+    updateView.persistTimer=setTimeout(saveToLocalStorage,150);
 
 },{passive:false});
 
@@ -1335,6 +1462,7 @@ function createLayoutData(){
             text:node.text,
             ip:node.ip || "",
             model:node.model || "",
+            portCount:getPortCount(node),
             location:node.location || "",
             notes:node.notes || "",
             x:node.x,
@@ -1347,6 +1475,10 @@ function createLayoutData(){
         zoom:zoom,
         viewX:viewX,
         viewY:viewY
+        ,diagramName:diagramName
+        ,theme:theme
+        ,gridEnabled:gridEnabled
+        ,snapEnabled:snapEnabled
 
     };
 
@@ -1429,7 +1561,7 @@ function saveLayout(){
     const a=document.createElement("a");
 
     a.href=url;
-    a.download="hotel-network-diagram.json";
+    a.download=safeFilename(diagramName,"json");
 
     document.body.appendChild(a);
 
@@ -1448,74 +1580,74 @@ function saveLayout(){
 
 function loadLayout(data){
 
-    if(!data) return;
+    if(!data) throw new Error("File kosong");
+    const parsed=typeof data==="string" ? JSON.parse(data) : data;
+    const legacy=Array.isArray(parsed);
+    const layout=legacy ? {nodes:parsed,links:[]} : parsed;
+    if(!layout || !Array.isArray(layout.nodes)) throw new Error("Struktur JSON harus memiliki daftar nodes");
 
-    const layout=JSON.parse(data);
+    const nextNodes=[];
+    const ids=new Set();
+    layout.nodes.forEach((n,index)=>{
+        if(!n || typeof n!=="object") throw new Error(`Node ke-${index+1} tidak valid`);
+        const type=DEVICE_TYPES.has(n.type) ? n.type : "pc";
+        let id=typeof n.id==="string" && n.id.trim() ? n.id.trim() : uniqueId(type);
+        while(ids.has(id)) id=uniqueId(type);
+        const x=Number(n.x), y=Number(n.y);
+        if(!Number.isFinite(x)||!Number.isFinite(y)) throw new Error(`Koordinat node ${id} tidak valid`);
+        ids.add(id);
+        nextNodes.push({id,type,text:String(n.text||type.toUpperCase()).slice(0,80),ip:String(n.ip||""),
+            model:String(n.model||""),portCount:Math.min(512,Math.max(0,Number.isInteger(Number(n.portCount))?Number(n.portCount):(DEFAULT_PORTS[type]||0))),
+            location:String(n.location||""),notes:String(n.notes||""),x,y});
+    });
 
-    const loadedNodes=Array.isArray(layout) ? layout : layout.nodes;
+    const nextLinks=[];
+    const pairs=new Set();
+    const linkIds=new Set();
+    (Array.isArray(layout.links)?layout.links:[]).forEach(raw=>{
+        const link=normalizeLink(raw);
+        if(!ids.has(link.from)||!ids.has(link.to)||link.from===link.to) return;
+        const pair=[link.from,link.to].sort().join("::");
+        if(pairs.has(pair)) return;
+        pairs.add(pair);
+        while(linkIds.has(link.id)) link.id=uniqueId("link");
+        linkIds.add(link.id);
+        const appearance=link.appearance;
+        appearance.color=/^#[0-9a-f]{6}$/i.test(appearance.color)?appearance.color:"#cfcfcf";
+        appearance.width=Math.min(16,Math.max(1,Number(appearance.width)||2));
+        appearance.style=["solid","dashed","dotted"].includes(appearance.style)?appearance.style:"solid";
+        appearance.opacity=Math.min(1,Math.max(.1,Number(appearance.opacity)||1));
+        appearance.labelFollowsLine=appearance.labelFollowsLine!==false;
+        const fromNode=nextNodes.find(n=>n.id===link.from), toNode=nextNodes.find(n=>n.id===link.to);
+        if(link.sourcePort<1||link.sourcePort>getPortCount(fromNode)||isPortUsedIn(nextLinks,link.from,link.sourcePort)) link.sourcePort=null;
+        if(link.targetPort<1||link.targetPort>getPortCount(toNode)||isPortUsedIn(nextLinks,link.to,link.targetPort)) link.targetPort=null;
+        nextLinks.push(link);
+    });
 
-    if(Array.isArray(loadedNodes)){
-
-        nodes.splice(0,nodes.length);
-
-        loadedNodes.forEach(n=>{
-
-            nodes.push({
-
-                id:n.id,
-                type:n.type,
-                text:n.text,
-                ip:n.ip || "",
-                model:n.model || "",
-                location:n.location || "",
-                notes:n.notes || "",
-                x:n.x,
-                y:n.y
-
-            });
-
-        });
-
-    }
-
-    if(Array.isArray(layout.links)){
-
-        links.splice(0,links.length);
-
-        layout.links.forEach(link=>{
-
-            if((Array.isArray(link) && link.length>=2) || (link && link.from && link.to)){
-
-                links.push(normalizeLink(link));
-
-            }
-
-        });
-
-    }
-
-    if(typeof layout.zoom==="number"){
-
-        zoom=layout.zoom;
-
-    }
-
-    if(typeof layout.viewX==="number"){
-
-        viewX=layout.viewX;
-
-    }
-
-    if(typeof layout.viewY==="number"){
-
-        viewY=layout.viewY;
-
-    }
+    nodes.splice(0,nodes.length,...nextNodes);
+    links.splice(0,links.length,...nextLinks);
+    zoom=Number.isFinite(Number(layout.zoom))?Math.min(4,Math.max(.3,Number(layout.zoom))):1;
+    viewX=Number.isFinite(Number(layout.viewX))?Number(layout.viewX):0;
+    viewY=Number.isFinite(Number(layout.viewY))?Number(layout.viewY):0;
+    diagramName=String(layout.diagramName||"HOTEL NETWORK DIAGRAM").slice(0,80);
+    theme=layout.theme==="light"?"light":"dark";
+    gridEnabled=layout.gridEnabled!==false;
+    snapEnabled=layout.snapEnabled!==false;
+    selectedNode=null; selectedElement=null; selectedLink=null; contextTarget=null; firstLinkNode=null; linkMode=false;
+    const cancelButton=document.getElementById("btnCancelLink");
+    if(cancelButton) cancelButton.hidden=true;
+    applyTheme();
+    document.getElementById("diagramName").value=diagramName;
 
     undoHistory.splice(0,undoHistory.length);
     redoHistory.splice(0,redoHistory.length);
     updateHistoryButtons();
 
+}
+
+function isPortUsedIn(list,nodeId,port){
+    if(!port) return false;
+    return list.some(l=>(l.from===nodeId&&l.sourcePort===port)||(l.to===nodeId&&l.targetPort===port));
 }
 
 
@@ -1571,18 +1703,65 @@ function createExportStyles(){
         .node circle,.deviceIcon{fill:#2f3136;stroke:#00c8ff;stroke-width:2;}
         .node text{fill:#ffffff;font-family:Segoe UI,Arial,sans-serif;font-size:13px;text-anchor:middle;dominant-baseline:middle;user-select:none;pointer-events:none;}
         .link{fill:none;}
+        .linkLabel{fill:#ffffff;font-family:Segoe UI,Arial,sans-serif;font-size:12px;text-anchor:middle;paint-order:stroke;stroke:#202020;stroke-width:4px;stroke-linejoin:round;}
     `;
 
     return style;
 
 }
 
+function buildExportSVG(){
+    render();
+    const bounds=getDiagramBounds();
+    const exportSvg=document.createElementNS(SVGNS,"svg");
+    exportSvg.setAttribute("xmlns",SVGNS);
+    exportSvg.setAttribute("width",bounds.width);
+    exportSvg.setAttribute("height",bounds.height);
+    exportSvg.setAttribute("viewBox",`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`);
+    exportSvg.setAttribute("aria-label",diagramName);
+    exportSvg.appendChild(createExportStyles());
+    const group=document.createElementNS(SVGNS,"g");
+    const exportLinks=linksLayer.cloneNode(true);
+    exportLinks.querySelectorAll('line[stroke="transparent"]').forEach(line=>line.remove());
+    const exportNodes=nodesLayer.cloneNode(true);
+    exportNodes.querySelectorAll(".selected").forEach(node=>node.classList.remove("selected"));
+    group.append(exportLinks,exportNodes); exportSvg.appendChild(group);
+    return {exportSvg,bounds};
+}
+
+function downloadBlob(blob,filename){
+    const url=URL.createObjectURL(blob),a=document.createElement("a");
+    a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),0);
+}
+
+function safeFilename(value,extension){
+    return `${value.replace(/[^a-z0-9_-]+/gi,"-").replace(/^-|-$/g,"")||"hotel-network-diagram"}.${extension}`;
+}
+
+function exportSVG(){
+    try{
+        const {exportSvg}=buildExportSVG();
+        const text=new XMLSerializer().serializeToString(exportSvg);
+        downloadBlob(new Blob([text],{type:"image/svg+xml;charset=utf-8"}),safeFilename(diagramName,"svg"));
+        showFeedback("SVG berhasil diekspor");
+    }catch(error){console.error(error);showFeedback("Export SVG gagal",true);}
+}
+
+function applyTheme(){
+    document.body.classList.toggle("lightTheme",theme==="light");
+    const button=document.getElementById("btnTheme");
+    if(button){button.setAttribute("aria-pressed",String(theme==="light"));button.textContent=theme==="light"?"Use Dark":"Use Light";}
+    document.querySelectorAll("#smallGrid path,#grid path").forEach(path=>path.setAttribute("stroke",theme==="light"?"#506070":"#ffffff"));
+}
+
 function exportPNG(){
 
-    render();
-
-    const bounds=getDiagramBounds();
+    let bounds;
+    try{bounds=buildExportSVG().bounds;}catch(error){showFeedback("Diagram tidak dapat diekspor",true);return;}
     const scale=4;
+
+    if(bounds.width*scale>16384 || bounds.height*scale>16384){showFeedback("Diagram terlalu besar untuk PNG",true);return;}
 
     const exportSvg=document.createElementNS(SVGNS,"svg");
 
@@ -1621,6 +1800,8 @@ function exportPNG(){
 
         const ctx=canvas.getContext("2d");
 
+        if(!ctx){URL.revokeObjectURL(url);showFeedback("Canvas tidak didukung browser",true);return;}
+
         ctx.clearRect(0,0,canvas.width,canvas.height);
         ctx.imageSmoothingEnabled=false;
         ctx.drawImage(img,0,0,canvas.width,canvas.height);
@@ -1629,11 +1810,13 @@ function exportPNG(){
 
         canvas.toBlob(function(pngBlob){
 
+            if(!pngBlob){showFeedback("Pembuatan PNG gagal",true);return;}
+
             const pngUrl=URL.createObjectURL(pngBlob);
             const a=document.createElement("a");
 
             a.href=pngUrl;
-            a.download="Hotel-Network.png";
+            a.download=safeFilename(diagramName,"png");
 
             document.body.appendChild(a);
             a.click();
@@ -1644,6 +1827,8 @@ function exportPNG(){
         },"image/png");
 
     };
+
+    img.onerror=function(){URL.revokeObjectURL(url);showFeedback("SVG gagal dimuat untuk PNG",true);};
 
     img.src=url;
 
@@ -1689,15 +1874,24 @@ function updateDeviceOptions(){
 
     });
 
-    devicePortCount.value =
-        DEVICE_MODELS[type][0].ports;
+    syncModelPortOptions();
 
+}
+function syncModelPortOptions(){
+    const option=deviceModel.selectedOptions[0];
+    if(!option) return;
+    const ports=Number(option.dataset.ports);
+    devicePortCount.innerHTML="";
+    const portOption=document.createElement("option");
+    portOption.value=ports; portOption.textContent=ports;
+    devicePortCount.appendChild(portOption);
 }
 loadFromLocalStorage();
 render();
 updateView();
 updateHistoryButtons();
 updateLayoutTools();
+applyTheme();
 /* ==========================================================
    ADD DEVICE
 ========================================================== */
@@ -1715,6 +1909,9 @@ const btnReset=document.getElementById("btnReset");
 const btnResetDefault=document.getElementById("btnResetDefault");
 const btnGrid=document.getElementById("btnGrid");
 const btnSnap=document.getElementById("btnSnap");
+const btnCancelLink=document.getElementById("btnCancelLink");
+const btnTheme=document.getElementById("btnTheme");
+const btnExportSVG=document.getElementById("btnExportSVG");
 
 const deviceModal=document.getElementById("deviceModal");
 
@@ -1749,6 +1946,7 @@ const DEVICE_MODELS = {
 
 };
 deviceType.addEventListener("change", updateDeviceOptions);
+deviceModel.addEventListener("change",syncModelPortOptions);
 
 updateDeviceOptions();
 const contextMenu=document.getElementById("contextMenu");
@@ -1761,6 +1959,10 @@ const propLinkWidth=document.getElementById("propLinkWidth");
 const propLinkStyle=document.getElementById("propLinkStyle");
 const propLinkOpacity=document.getElementById("propLinkOpacity");
 const btnDeleteLink=document.getElementById("btnDeleteLink");
+const propLinkLabel=document.getElementById("propLinkLabel");
+const propSourcePort=document.getElementById("propSourcePort");
+const propTargetPort=document.getElementById("propTargetPort");
+const propLabelFollowsLine=document.getElementById("propLabelFollowsLine");
 
 function updateSelectedLinkAppearance(){
 
@@ -1797,6 +1999,20 @@ function updateSelectedLinkAppearance(){
     });
 
 });
+
+[propLinkLabel,propSourcePort,propTargetPort,propLabelFollowsLine].forEach(input=>input.addEventListener("change",function(){
+    if(!selectedLink) return;
+    const source=Number(propSourcePort.value)||null;
+    const target=Number(propTargetPort.value)||null;
+    if(isPortUsed(selectedLink.from,source,selectedLink.id)||isPortUsed(selectedLink.to,target,selectedLink.id)){
+        showFeedback("Port tersebut sudah digunakan",true); selectLinkById(selectedLink.id); return;
+    }
+    recordHistory();
+    selectedLink.label=propLinkLabel.value.trim().slice(0,80);
+    selectedLink.sourcePort=source; selectedLink.targetPort=target;
+    selectedLink.appearance={...getLinkAppearance(selectedLink),labelFollowsLine:propLabelFollowsLine.checked};
+    render(); saveToLocalStorage();
+}));
 
 btnDeleteLink.onclick=function(){
 
@@ -1867,6 +2083,7 @@ btnAddDevice.onclick=function(){
     updateDeviceOptions();
 
     deviceModal.style.display="flex";
+    deviceType.focus();
 
 };
 btnExportPNG.onclick=function(){
@@ -1892,12 +2109,14 @@ btnGrid.onclick=function(){
 
     gridEnabled=!gridEnabled;
     updateLayoutTools();
+    saveToLocalStorage();
 
 };
 btnSnap.onclick=function(){
 
     snapEnabled=!snapEnabled;
     updateLayoutTools();
+    saveToLocalStorage();
 
 };
 btnAddLink.onclick=function(){
@@ -1905,15 +2124,28 @@ btnAddLink.onclick=function(){
     linkMode=true;
 
     firstLinkNode=null;
+    btnCancelLink.hidden=false;
 
     document.getElementById("statusBar").textContent=
         "LINK MODE : pilih device pertama";
 
 };
+btnCancelLink.onclick=cancelLinkMode;
+btnExportSVG.onclick=exportSVG;
+btnTheme.onclick=function(){theme=theme==="dark"?"light":"dark";applyTheme();saveToLocalStorage();};
+
+const diagramNameInput=document.getElementById("diagramName");
+diagramNameInput.addEventListener("change",function(){
+    const value=this.value.trim();
+    if(!value){this.value=diagramName;showFeedback("Nama diagram tidak boleh kosong",true);return;}
+    if(value!==diagramName) recordHistory();
+    diagramName=value; saveToLocalStorage();
+});
 
 btnCloseDevice.onclick=function(){
 
     deviceModal.style.display="none";
+    btnAddDevice.focus();
 
 };
 
@@ -1936,10 +2168,10 @@ btnCreateDevice.onclick=function(){
         type:type,
 
         text:label,
-
-        x:getSnappedPosition(350,220).x,
-
-        y:getSnappedPosition(350,220).y
+        model:(type==="router"||type==="switch") ? deviceModel.value : "",
+        portCount:(type==="router"||type==="switch") ? Number(devicePortCount.value) : (DEFAULT_PORTS[type]||0),
+        x:getNextDevicePosition().x,
+        y:getNextDevicePosition().y
 
     });
 
@@ -1949,13 +2181,32 @@ btnCreateDevice.onclick=function(){
     saveToLocalStorage();
 
 };
+
+function getNextDevicePosition(){
+    const rect=svg.getBoundingClientRect();
+    const center={x:(rect.width/2-viewX)/zoom-NODE_WIDTH/2,y:(rect.height/2-viewY)/zoom-NODE_HEIGHT/2};
+    for(let i=0;i<20;i++){
+        const p=getSnappedPosition(center.x+(i%5)*40,center.y+Math.floor(i/5)*40);
+        if(!nodes.some(n=>Math.abs(n.x-p.x)<30&&Math.abs(n.y-p.y)<30)) return p;
+    }
+    return getSnappedPosition(center.x+nodes.length*20,center.y+nodes.length*20);
+}
 /* ==========================================================
    DELETE DEVICE
 ========================================================== */
 
 document.addEventListener("keydown",function(e){
 
-    if((e.ctrlKey || e.metaKey) && e.key.toLowerCase()==="z"){
+    if(e.key==="Escape"){
+        if(deviceModal.style.display==="flex"){deviceModal.style.display="none";btnAddDevice.focus();}
+        contextMenu.style.display="none";
+        if(linkMode) cancelLinkMode();
+        return;
+    }
+
+    if(isEditingTarget(e.target)) return;
+
+    if((e.ctrlKey || e.metaKey) && e.key.toLowerCase()==="z" && !e.shiftKey){
 
         e.preventDefault();
         undo();
@@ -1963,7 +2214,7 @@ document.addEventListener("keydown",function(e){
 
     }
 
-    if((e.ctrlKey || e.metaKey) && e.key.toLowerCase()==="y"){
+    if((e.ctrlKey || e.metaKey) && (e.key.toLowerCase()==="y" || (e.key.toLowerCase()==="z"&&e.shiftKey))){
 
         e.preventDefault();
         redo();
@@ -1982,35 +2233,7 @@ document.addEventListener("keydown",function(e){
 
     if(!selectedNode) return;
 
-    const idx=nodes.findIndex(n=>n.id===selectedNode.id);
-
-    if(idx>=0){
-
-        recordHistory();
-
-        nodes.splice(idx,1);
-
-    }
-
-    for(let i=links.length-1;i>=0;i--){
-
-        if(
-            links[i].from===selectedNode.id ||
-            links[i].to===selectedNode.id
-        ){
-
-            links.splice(i,1);
-
-        }
-
-    }
-
-    selectedNode=null;
-    selectedElement=null;
-    selectedLink=null;
-
-    render();
-    saveToLocalStorage();
+    deleteNodeById(selectedNode.id);
 
 });
 document.addEventListener("click",function(){
@@ -2019,41 +2242,27 @@ document.addEventListener("click",function(){
 
 });
 
+[cmRename,cmDuplicate,cmDelete].forEach(item=>item.addEventListener("keydown",e=>{
+    if(e.key==="Enter"||e.key===" "){e.preventDefault();item.click();}
+}));
+
 cmDelete.onclick=function(){
 
     if(!contextTarget) return;
 
-    const idx=nodes.findIndex(n=>n.id===contextTarget.id);
-
-    if(idx>=0){
-
-        recordHistory();
-
-        nodes.splice(idx,1);
-
-    }
-
-    for(let i=links.length-1;i>=0;i--){
-
-        if(
-            links[i].from===contextTarget.id ||
-            links[i].to===contextTarget.id
-        ){
-
-            links.splice(i,1);
-
-        }
-
-    }
-
-    contextTarget=null;
-
-    contextMenu.style.display="none";
-
-    render();
-    saveToLocalStorage();
+    deleteNodeById(contextTarget.id);
 
 };
+function deleteNodeById(id){
+    const idx=nodes.findIndex(n=>n.id===id);
+    if(idx<0) return;
+    recordHistory();
+    nodes.splice(idx,1);
+    for(let i=links.length-1;i>=0;i--) if(links[i].from===id||links[i].to===id) links.splice(i,1);
+    if(firstLinkNode?.id===id) cancelLinkMode();
+    selectedNode=null; selectedElement=null; selectedLink=null; contextTarget=null;
+    showNodeProperties(); render(); saveToLocalStorage();
+}
 cmRename.onclick=function(){
 
     if(!contextTarget) return;
@@ -2064,6 +2273,8 @@ cmRename.onclick=function(){
     );
 
     if(nama===null) return;
+
+    if(!nama.trim()){showFeedback("Nama device tidak boleh kosong",true);return;}
 
     if(contextTarget.text!==nama.trim()){
 
