@@ -33,6 +33,10 @@ let firstLinkNode=null;
 
 let contextTarget=null;
 let panMode=false;
+let panPointerId=null;
+let spacePressed=false;
+const touchPoints=new Map();
+let pinchState=null;
 
 let panStartX=0;
 
@@ -67,10 +71,10 @@ const DEVICE_LIBRARY={
     utm:{category:"Security",label:"UTM",icon:"firewall",ports:6,models:["Unified Threat Management"]},
     vpn_gateway:{category:"Security",label:"VPN Gateway",icon:"gateway",ports:4,models:["VPN Gateway"]},
     security_gateway:{category:"Security",label:"Security Gateway",icon:"firewall",ports:6,models:["Security Gateway"]},
-    ap:{category:"Wireless",label:"Access Point",icon:"wireless",ports:1,models:["Indoor AP","Ceiling AP","Guest Wi-Fi AP","Staff Wi-Fi AP"]},
-    outdoor_ap:{category:"Wireless",label:"Outdoor Access Point",icon:"outdoor_ap",ports:1,models:["Outdoor AP"]},
+    ap:{category:"Wireless",label:"Access Point",icon:"wireless",ports:1,status:true,models:["Indoor AP","Ceiling AP","Guest Wi-Fi AP","Staff Wi-Fi AP"]},
+    outdoor_ap:{category:"Wireless",label:"Outdoor Access Point",icon:"outdoor_ap",ports:1,status:true,models:["Outdoor AP"]},
     wireless_controller:{category:"Wireless",label:"Wireless Controller",icon:"controller",ports:4,models:["Wi-Fi Controller"]},
-    mesh_node:{category:"Wireless",label:"Wi-Fi Mesh Node",icon:"mesh",ports:1,models:["Mesh Node"]},
+    mesh_node:{category:"Wireless",label:"Wi-Fi Mesh Node",icon:"mesh",ports:1,status:true,models:["Mesh Node"]},
     wireless_bridge:{category:"Wireless",label:"Wireless Bridge",icon:"wireless_bridge",ports:2,models:["Wireless Bridge"]},
     repeater:{category:"Wireless",label:"Repeater",icon:"wireless",ports:1,models:["Wi-Fi Repeater"]},
     gateway:{category:"Network",label:"Gateway",icon:"gateway",ports:4,models:["Network Gateway"]},
@@ -78,7 +82,7 @@ const DEVICE_LIBRARY={
     ont:{category:"WAN",label:"ONT / ONU",icon:"ont",ports:4,models:["Fiber ONT","ONU"]},
     media_converter:{category:"Infrastructure",label:"Media Converter",icon:"converter",ports:2,models:["Fiber Media Converter"]},
     network_bridge:{category:"Network",label:"Network Bridge",icon:"gateway",ports:2,models:["Network Bridge"]},
-    pc:{category:"Computing",label:"Desktop PC",icon:"desktop",ports:1,models:["Desktop PC","Workstation"]},
+    pc:{category:"Computing",label:"Desktop PC",icon:"desktop",ports:1,status:true,models:["Desktop PC","Workstation"]},
     server:{category:"Server & Storage",label:"Server",icon:"server",ports:2,models:["Application Server","Database Server","File Server"]},
     rack_server:{category:"Server & Storage",label:"Rack Server",icon:"rack_server",ports:4,models:["1U Rack Server","2U Rack Server"]},
     tower_server:{category:"Server & Storage",label:"Tower Server",icon:"tower",ports:2,models:["Tower Server"]},
@@ -91,9 +95,9 @@ const DEVICE_LIBRARY={
     storage_server:{category:"Server & Storage",label:"Storage Server",icon:"storage",ports:4,models:["Storage Server"]},
     backup_server:{category:"Server & Storage",label:"Backup Server",icon:"server",ports:2,models:["Backup Server"]},
     disk_storage:{category:"Server & Storage",label:"Disk Storage",icon:"storage",ports:2,models:["Disk Array"]},
-    camera:{category:"CCTV & Access",label:"IP Camera",icon:"camera",ports:1,models:["IP Camera","Bullet Camera"]},
-    dome_camera:{category:"CCTV & Access",label:"Dome Camera",icon:"dome_camera",ports:1,models:["Indoor Dome","Outdoor Dome"]},
-    ptz_camera:{category:"CCTV & Access",label:"PTZ Camera",icon:"ptz_camera",ports:1,models:["PTZ Camera"]},
+    camera:{category:"CCTV & Access",label:"IP Camera",icon:"camera",ports:1,status:true,models:["IP Camera","Bullet Camera"]},
+    dome_camera:{category:"CCTV & Access",label:"Dome Camera",icon:"dome_camera",ports:1,status:true,models:["Indoor Dome","Outdoor Dome"]},
+    ptz_camera:{category:"CCTV & Access",label:"PTZ Camera",icon:"ptz_camera",ports:1,status:true,models:["PTZ Camera"]},
     dvr:{category:"CCTV & Access",label:"DVR",icon:"recorder",ports:16,models:["8-Channel DVR","16-Channel DVR","32-Channel DVR"]},
     nvr:{category:"CCTV & Access",label:"NVR",icon:"recorder",ports:16,models:["8-Channel NVR","16-Channel NVR","32-Channel NVR"]},
     cctv_monitor:{category:"CCTV & Access",label:"CCTV Monitor",icon:"monitor",ports:2,models:["CCTV Monitor"]},
@@ -905,6 +909,14 @@ if(node.type==="pabx"){
     if(node.iconType!=="custom") drawProfessionalIcon(icon,getNodeIconKey(node));
     g.appendChild(icon);
 
+    if(getDeviceDefinition(node.type).status){
+        const badge=document.createElementNS(SVGNS,"circle");
+        const status=["active","inactive","problem"].includes(node.status)?node.status:"active";
+        badge.setAttribute("cx",68);badge.setAttribute("cy",12);badge.setAttribute("r",6);
+        badge.classList.add("statusBadge",status);badge.style.pointerEvents="none";
+        const title=document.createElementNS(SVGNS,"title");title.textContent=`${status}${node.statusNote?`: ${node.statusNote}`:""}`;badge.appendChild(title);g.appendChild(badge);
+    }
+
     //------------------------------------
 
     const text=document.createElementNS(SVGNS,"text");
@@ -1483,15 +1495,10 @@ if(linkMode){
     document.getElementById("propName").value=
         selectedNode.text;
 
-    document.getElementById("propDeviceType").value=getDeviceDefinition(selectedNode.type).label;
+    populatePropertyDeviceFields(selectedNode);
 
     document.getElementById("propIP").value=
         selectedNode.ip || "";
-
-    document.getElementById("propModel").value=
-        selectedNode.model || "";
-
-    document.getElementById("propPortCount").value=getPortCount(selectedNode);
 
     document.getElementById("propLocation").value=
         selectedNode.location || "";
@@ -1499,10 +1506,36 @@ if(linkMode){
     document.getElementById("propNotes").value=
         selectedNode.notes || "";
 
+    document.getElementById("propStatus").value=["active","inactive","problem"].includes(selectedNode.status)?selectedNode.status:"active";
+    document.getElementById("propStatusNote").value=selectedNode.statusNote||"";
+
     updateNodeMediaPreviews();
 
     showNodeProperties();
 
+}
+
+function populatePropertyDeviceFields(node,typeOverride=null){
+    const typeSelect=document.getElementById("propDeviceType"),modelSelect=document.getElementById("propModel"),portSelect=document.getElementById("propPortCount");
+    if(typeSelect.options.length===0){
+        const groups=new Map();Object.entries(DEVICE_LIBRARY).forEach(([id,item])=>{if(!groups.has(item.category)){const group=document.createElement("optgroup");group.label=item.category;groups.set(item.category,group);typeSelect.appendChild(group);}const option=document.createElement("option");option.value=id;option.textContent=item.label;groups.get(item.category).appendChild(option);});
+    }
+    const type=typeOverride||node.type;typeSelect.value=DEVICE_LIBRARY[type]?type:"pc";
+    const definition=getDeviceDefinition(typeSelect.value);modelSelect.innerHTML="";
+    definition.models.forEach(name=>{const option=document.createElement("option");option.value=name;option.textContent=name;modelSelect.appendChild(option);});
+    const preserve=type===node.type;
+    if(preserve&&node.model&&!definition.models.includes(node.model)){const legacy=document.createElement("option");legacy.value=node.model;legacy.textContent=node.model;modelSelect.appendChild(legacy);}
+    modelSelect.value=preserve&&node.model&&[...modelSelect.options].some(option=>option.value===node.model)?node.model:definition.models[0];
+    populatePropertyPorts(node.portCount,definition,modelSelect.value);
+    document.getElementById("statusProperties").hidden=!definition.status;
+}
+
+function populatePropertyPorts(current,definition,model){
+    const select=document.getElementById("propPortCount");select.innerHTML="";
+    const match=String(model).match(/(\d+)[- ]Port/i),suggested=match?Number(match[1]):definition.ports;
+    const values=definition.ports>0?[...new Set([suggested,definition.ports].filter(value=>value>0))]:[0];
+    values.forEach(value=>{const option=document.createElement("option");option.value=value;option.textContent=value;select.appendChild(option);});
+    select.value=values.includes(Number(current))?String(current):String(values[0]);
 }
 
 function setPreview(element,data,emptyText){
@@ -1537,6 +1570,8 @@ document
 
     const name=document.getElementById("propName").value.trim();
     const ip=document.getElementById("propIP").value.trim();
+    const nextType=propDeviceType.value;
+    const nextModel=propModel.value;
     const nextPortCount=Math.min(512,Math.max(0,Number(document.getElementById("propPortCount").value)||0));
     if(!name){ showFeedback("Nama device tidak boleh kosong",true); return; }
     if(ip && !isValidIP(ip)){ showFeedback("Format IP address tidak valid",true); return; }
@@ -1549,11 +1584,14 @@ document
     if(nextNode){
 
         nextNode.text=name;
+        nextNode.type=nextType;
         nextNode.ip=ip;
-        nextNode.model=document.getElementById("propModel").value;
+        nextNode.model=nextModel;
         nextNode.portCount=nextPortCount;
         nextNode.location=document.getElementById("propLocation").value;
         nextNode.notes=document.getElementById("propNotes").value;
+        nextNode.status=document.getElementById("propStatus").value;
+        nextNode.statusNote=document.getElementById("propStatusNote").value.trim().slice(0,160);
 
     }
 
@@ -1564,12 +1602,12 @@ document
     }
 
     selectedNode.text=name;
+    selectedNode.type=nextType;
 
     selectedNode.ip=
         ip;
 
-    selectedNode.model=
-        document.getElementById("propModel").value;
+    selectedNode.model=nextModel;
 
     selectedNode.portCount=nextPortCount;
 
@@ -1578,6 +1616,9 @@ document
 
     selectedNode.notes=
         document.getElementById("propNotes").value;
+
+    selectedNode.status=document.getElementById("propStatus").value;
+    selectedNode.statusNote=document.getElementById("propStatusNote").value.trim().slice(0,160);
 
     render();
     saveToLocalStorage();
@@ -1591,17 +1632,50 @@ function isValidIP(value){
 /* ==========================================================
    DRAG ENGINE
 ========================================================== */
-svg.addEventListener("mousedown",function(e){
-
-    if(e.button!==2 || e.target.closest?.(".node")) return;
-
-    panMode=true;
-
-    panStartX=e.clientX-viewX;
-
-    panStartY=e.clientY-viewY;
-
-});
+function isCanvasTarget(target){return !target.closest?.(".node,.waypointHandle")&&!target.dataset?.linkId;}
+function beginCanvasPan(e){
+    panMode=true;panPointerId=e.pointerId;panStartX=e.clientX-viewX;panStartY=e.clientY-viewY;
+    svg.setPointerCapture?.(e.pointerId);e.preventDefault();
+}
+function cancelObjectGestureForPinch(){
+    if(dragging&&selectedNode&&dragStartPosition){selectedNode.x=dragStartPosition.x;selectedNode.y=dragStartPosition.y;dragging=null;draggingPointerId=null;dragStartPosition=null;render();}
+    if(waypointDrag){waypointDrag.link.route=waypointDrag.startRoute.map(point=>({...point}));waypointDrag=null;drawLinksOnly();}
+}
+function startCanvasGesture(e){
+    if(e.pointerType==="touch"){
+        touchPoints.set(e.pointerId,{x:e.clientX,y:e.clientY});
+        if(touchPoints.size===2){
+            cancelObjectGestureForPinch();panMode=false;panPointerId=null;
+            const points=[...touchPoints.values()],center={x:(points[0].x+points[1].x)/2,y:(points[0].y+points[1].y)/2};
+            const rect=svg.getBoundingClientRect(),local={x:center.x-rect.left,y:center.y-rect.top};
+            pinchState={distance:Math.hypot(points[1].x-points[0].x,points[1].y-points[0].y),zoom,worldX:(local.x-viewX)/zoom,worldY:(local.y-viewY)/zoom};
+            e.preventDefault();e.stopPropagation();return;
+        }
+        if(touchPoints.size===1&&isCanvasTarget(e.target)){beginCanvasPan(e);e.stopPropagation();}
+        return;
+    }
+    if(isCanvasTarget(e.target)&&((e.button===1)||(e.button===0&&spacePressed))){beginCanvasPan(e);e.stopPropagation();}
+}
+function moveCanvasGesture(e){
+    if(e.pointerType==="touch"&&touchPoints.has(e.pointerId))touchPoints.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(pinchState&&touchPoints.size>=2){
+        const points=[...touchPoints.values()].slice(0,2),distance=Math.hypot(points[1].x-points[0].x,points[1].y-points[0].y);
+        const center={x:(points[0].x+points[1].x)/2,y:(points[0].y+points[1].y)/2},rect=svg.getBoundingClientRect();
+        zoom=Math.min(4,Math.max(.3,pinchState.zoom*(distance/(pinchState.distance||1))));
+        viewX=center.x-rect.left-pinchState.worldX*zoom;viewY=center.y-rect.top-pinchState.worldY*zoom;updateView();
+        e.preventDefault();e.stopPropagation();return;
+    }
+    if(panMode&&e.pointerId===panPointerId){viewX=e.clientX-panStartX;viewY=e.clientY-panStartY;updateView();e.preventDefault();e.stopPropagation();}
+}
+function endCanvasGesture(e){
+    if(touchPoints.has(e.pointerId))touchPoints.delete(e.pointerId);
+    if(pinchState&&touchPoints.size<2){pinchState=null;saveToLocalStorage();}
+    if(e.pointerId===panPointerId){panMode=false;panPointerId=null;saveToLocalStorage();}
+}
+svg.addEventListener("pointerdown",startCanvasGesture,true);
+svg.addEventListener("pointermove",moveCanvasGesture,true);
+window.addEventListener("pointerup",endCanvasGesture,true);
+window.addEventListener("pointercancel",endCanvasGesture,true);
 function getViewportPoint(e){
 
     const pt=svg.createSVGPoint();
@@ -1848,6 +1922,8 @@ function createLayoutData(){
             iconType:node.iconType==="custom"?"custom":"default",
             iconData:node.iconType==="custom"&&isSafeImageData(node.iconData)?node.iconData:"",
             pictureData:isSafeImageData(node.pictureData)?node.pictureData:"",
+            status:["active","inactive","problem"].includes(node.status)?node.status:"active",
+            statusNote:String(node.statusNote||"").slice(0,160),
             x:node.x,
             y:node.y
 
@@ -1986,7 +2062,9 @@ function loadLayout(data){
             location:String(n.location||""),notes:String(n.notes||""),
             iconType:n.iconType==="custom"&&isSafeImageData(n.iconData)?"custom":"default",
             iconData:n.iconType==="custom"&&isSafeImageData(n.iconData)?n.iconData:"",
-            pictureData:isSafeImageData(n.pictureData)?n.pictureData:"",x,y});
+            pictureData:isSafeImageData(n.pictureData)?n.pictureData:"",
+            status:["active","inactive","problem"].includes(n.status)?n.status:"active",
+            statusNote:String(n.statusNote||"").slice(0,160),x,y});
     });
 
     const nextLinks=[];
@@ -2094,6 +2172,7 @@ function createExportStyles(){
         .node text{fill:#ffffff;font-family:Segoe UI,Arial,sans-serif;font-size:13px;text-anchor:middle;dominant-baseline:middle;user-select:none;pointer-events:none;}
         .link{fill:none;}
         .linkLabel{fill:#ffffff;font-family:Segoe UI,Arial,sans-serif;font-size:12px;text-anchor:middle;paint-order:stroke;stroke:#202020;stroke-width:4px;stroke-linejoin:round;}
+        .node .statusBadge{stroke:#ffffff;stroke-width:2;}.statusBadge.active{fill:#27ae60;}.statusBadge.inactive{fill:#7f8c8d;}.statusBadge.problem{fill:#e53935;}
     `;
 
     return style;
@@ -2342,6 +2421,11 @@ const backgroundType=document.getElementById("backgroundType");
 const backgroundColor=document.getElementById("backgroundColor");
 const backgroundFit=document.getElementById("backgroundFit");
 const backgroundImageFile=document.getElementById("backgroundImageFile");
+const propDeviceType=document.getElementById("propDeviceType");
+const propModel=document.getElementById("propModel");
+const propPortCount=document.getElementById("propPortCount");
+propDeviceType.addEventListener("change",function(){if(selectedNode){populatePropertyDeviceFields(selectedNode,this.value);if(selectedNode.iconType!=="custom")setDefaultIconPreview(document.getElementById("propIconPreview"),{...selectedNode,type:this.value,model:propModel.value});}});
+propModel.addEventListener("change",function(){if(selectedNode){populatePropertyPorts(null,getDeviceDefinition(propDeviceType.value),this.value);if(selectedNode.iconType!=="custom")setDefaultIconPreview(document.getElementById("propIconPreview"),{...selectedNode,type:propDeviceType.value,model:this.value});}});
 
 function updateSelectedLinkAppearance(){
 
@@ -2609,6 +2693,8 @@ btnCreateDevice.onclick=function(){
         iconType:deviceIconMode.value==="custom"&&pendingDeviceIconData?"custom":"default",
         iconData:deviceIconMode.value==="custom"?pendingDeviceIconData:"",
         pictureData:"",
+        status:"active",
+        statusNote:"",
         x:getNextDevicePosition().x,
         y:getNextDevicePosition().y
 
@@ -2646,6 +2732,8 @@ document.addEventListener("keydown",function(e){
 
     if(isEditingTarget(e.target)) return;
 
+    if(e.code==="Space"){spacePressed=true;e.preventDefault();svg.style.cursor="grab";return;}
+
     if((e.ctrlKey || e.metaKey) && e.key.toLowerCase()==="z" && !e.shiftKey){
 
         e.preventDefault();
@@ -2678,6 +2766,7 @@ document.addEventListener("keydown",function(e){
     deleteNodeById(selectedNode.id);
 
 });
+document.addEventListener("keyup",function(e){if(e.code==="Space"){spacePressed=false;svg.style.cursor="";}});
 document.addEventListener("click",function(){
 
     contextMenu.style.display="none";
