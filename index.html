@@ -52,6 +52,8 @@
 
         <button id="btnTheme" aria-pressed="false">Dark / Light</button>
 
+        <button id="btnBackground">Background</button>
+
     </div>
 
 </div>
@@ -162,6 +164,22 @@
                 Update
 
             </button>
+
+            <section class="mediaSection" aria-labelledby="deviceIconHeading">
+                <h3 id="deviceIconHeading">Device Icon</h3>
+                <div id="propIconPreview" class="mediaPreview iconPreview">Default icon</div>
+                <button id="btnChangeIcon" type="button">Change Icon</button>
+                <button id="btnResetIcon" type="button">Reset Default</button>
+                <input id="propIconFile" type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" hidden>
+            </section>
+
+            <section class="mediaSection" aria-labelledby="devicePictureHeading">
+                <h3 id="devicePictureHeading">Device Picture</h3>
+                <div id="propPicturePreview" class="mediaPreview picturePreview">No picture</div>
+                <button id="btnChangePicture" type="button">Add Picture</button>
+                <button id="btnRemovePicture" type="button">Remove Picture</button>
+                <input id="propPictureFile" type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" hidden>
+            </section>
 
         </div>
 
@@ -274,6 +292,14 @@
 <select id="devicePortCount" style="display:none;">
 </select>
 
+        <label for="deviceIconMode">Icon</label>
+        <select id="deviceIconMode">
+            <option value="default">Default Icon</option>
+            <option value="custom">Choose from Computer</option>
+        </select>
+        <input id="deviceIconFile" type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" hidden>
+        <div id="deviceIconPreview" class="mediaPreview iconPreview">Default icon</div>
+
         <br><br>
 
         <button id="btnCreateDevice">Create</button>
@@ -282,6 +308,34 @@
 
     </div>
 
+</div>
+
+<div id="backgroundModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="backgroundModalTitle">
+    <div class="modalContent">
+        <h2 id="backgroundModalTitle">Diagram Background</h2>
+        <label for="backgroundType">Background</label>
+        <select id="backgroundType">
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+            <option value="color">Custom Color</option>
+            <option value="image">Choose Image</option>
+            <option value="transparent">Transparent</option>
+        </select>
+        <label for="backgroundColor">Color</label>
+        <input id="backgroundColor" type="color" value="#202020">
+        <label for="backgroundFit">Image Fit</label>
+        <select id="backgroundFit">
+            <option value="cover">Cover</option>
+            <option value="contain">Contain</option>
+            <option value="center">Center</option>
+            <option value="repeat">Repeat / Tile</option>
+        </select>
+        <input id="backgroundImageFile" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+        <div id="backgroundPreview" class="backgroundPreview">Current background</div>
+        <button id="btnChooseBackgroundImage" type="button">Choose Image</button>
+        <button id="btnResetBackground" type="button">Reset Background</button>
+        <button id="btnCloseBackground" type="button">Close</button>
+    </div>
 </div>
 
 <div id="contextMenu" class="contextMenu" role="menu" aria-label="Device actions">
