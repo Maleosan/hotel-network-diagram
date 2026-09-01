@@ -25,6 +25,8 @@ let offsetY = 0;
 let selectedElement = null;
 let selectedLink = null;
 let linkEditHistoryRecorded = false;
+let selectedWaypointIndex = null;
+let waypointDrag = null;
 
 let linkMode=false;
 let firstLinkNode=null;
@@ -194,6 +196,8 @@ function normalizeLink(link){
             sourcePort:null,
             targetPort:null,
             label:"",
+            routing:"straight",
+            route:[],
             appearance:createDefaultLinkAppearance()
         };
 
@@ -206,6 +210,10 @@ function normalizeLink(link){
         sourcePort:Number.isInteger(Number(link.sourcePort)) ? Number(link.sourcePort) : null,
         targetPort:Number.isInteger(Number(link.targetPort)) ? Number(link.targetPort) : null,
         label:typeof link.label==="string" ? link.label.slice(0,80) : "",
+        routing:link.routing==="custom" ? "custom" : "straight",
+        route:Array.isArray(link.route) ? link.route
+            .filter(point=>point && Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y)))
+            .map(point=>({x:Number(point.x),y:Number(point.y)})) : [],
         appearance:{
             ...createDefaultLinkAppearance(),
             ...(link.appearance || link.style || {})
@@ -222,7 +230,8 @@ function cloneLink(link){
     return{
         ...normalized,
         appearance:{...normalized.appearance},
-        meta:{...(normalized.meta || {})}
+        meta:{...(normalized.meta || {})},
+        route:normalized.route.map(point=>({...point}))
     };
 
 }
@@ -300,6 +309,7 @@ function restoreDiagramState(state,shouldPersist=true){
     selectedNode=null;
     selectedElement=null;
     selectedLink=null;
+    selectedWaypointIndex=null;
     contextTarget=null;
     linkMode=false;
     document.getElementById("btnCancelLink").hidden=true;
@@ -839,6 +849,7 @@ function deleteSelectedLink(){
         recordHistory();
         links.splice(idx,1);
         selectedLink=null;
+        selectedWaypointIndex=null;
         showNodeProperties();
         render();
         saveToLocalStorage();
@@ -856,6 +867,7 @@ function selectLinkById(id){
     selectedNode=null;
     selectedElement=null;
     linkEditHistoryRecorded=false;
+    selectedWaypointIndex=null;
 
     document
         .querySelectorAll(".node")
@@ -872,10 +884,20 @@ function selectLinkById(id){
     document.getElementById("propLinkWidth").value=appearance.width;
     document.getElementById("propLinkStyle").value=appearance.style;
     document.getElementById("propLinkOpacity").value=appearance.opacity;
+    document.getElementById("propLinkRouting").value=selectedLink.routing;
+    syncRoutingControls();
 
     showLinkProperties();
     render();
 
+}
+
+function syncRoutingControls(){
+    const routing=document.getElementById("propLinkRouting");
+    const controls=document.getElementById("routeControls");
+    if(!routing||!controls) return;
+    routing.value=selectedLink?.routing||"straight";
+    controls.hidden=!selectedLink||selectedLink.routing!=="custom";
 }
 
 function populatePortSelect(id,nodeId,current,linkId){
@@ -959,6 +981,38 @@ function drawSwitch(icon){
 
 }
 
+function getOrthogonalPoints(link,from,to){
+    if(link.routing!=="custom") return [from,to];
+    const points=[from];
+    let current=from;
+    link.route.forEach(anchor=>{
+        if(current.x!==anchor.x) points.push({x:anchor.x,y:current.y});
+        if(current.y!==anchor.y) points.push({x:anchor.x,y:anchor.y});
+        current=anchor;
+    });
+    if(current.x!==to.x) points.push({x:to.x,y:current.y});
+    if(current.y!==to.y) points.push({x:to.x,y:to.y});
+    if(points[points.length-1].x!==to.x || points[points.length-1].y!==to.y) points.push(to);
+    return points.filter((point,index,array)=>index===0||point.x!==array[index-1].x||point.y!==array[index-1].y);
+}
+
+function getLinkPathData(link,from,to){
+    return getOrthogonalPoints(link,from,to).map((point,index)=>`${index?"L":"M"} ${point.x} ${point.y}`).join(" ");
+}
+
+function getRouteLabelPoint(link,from,to){
+    const points=getOrthogonalPoints(link,from,to);
+    let total=0;
+    const lengths=[];
+    for(let i=1;i<points.length;i++){const length=Math.hypot(points[i].x-points[i-1].x,points[i].y-points[i-1].y);lengths.push(length);total+=length;}
+    let remaining=total/2;
+    for(let i=0;i<lengths.length;i++){
+        if(remaining<=lengths[i]){const ratio=lengths[i]?remaining/lengths[i]:0;return{x:points[i].x+(points[i+1].x-points[i].x)*ratio,y:points[i].y+(points[i+1].y-points[i].y)*ratio,angle:Math.atan2(points[i+1].y-points[i].y,points[i+1].x-points[i].x)*180/Math.PI};}
+        remaining-=lengths[i];
+    }
+    return{x:(from.x+to.x)/2,y:(from.y+to.y)/2,angle:0};
+}
+
 /* ==========================================================
    DRAW LINKS
 ========================================================== */
@@ -971,12 +1025,10 @@ function drawLinks(){
         const to=findCenter(link.to);
 
         // garis klik (tidak terlihat)
-        const hit=document.createElementNS(SVGNS,"line");
+        const hit=document.createElementNS(SVGNS,"path");
 
-        hit.setAttribute("x1",from.x);
-        hit.setAttribute("y1",from.y);
-        hit.setAttribute("x2",to.x);
-        hit.setAttribute("y2",to.y);
+        hit.setAttribute("d",getLinkPathData(link,from,to));
+        hit.setAttribute("fill","none");
 
         hit.setAttribute("stroke","transparent");
         hit.setAttribute("stroke-width","16");
@@ -991,17 +1043,15 @@ function drawLinks(){
             selectLinkById(this.dataset.linkId);
 
         });
+        hit.addEventListener("dblclick",function(e){e.stopPropagation();selectLinkById(link.id);addWaypointAt(getViewportPoint(e));});
 
         // garis yang terlihat
-        const line=document.createElementNS(SVGNS,"line");
+        const line=document.createElementNS(SVGNS,"path");
 
         line.classList.add("link");
         line.style.pointerEvents="none";
 
-        line.setAttribute("x1",from.x);
-        line.setAttribute("y1",from.y);
-        line.setAttribute("x2",to.x);
-        line.setAttribute("y2",to.y);
+        line.setAttribute("d",getLinkPathData(link,from,to));
         line.dataset.from=link.from;
         line.dataset.to=link.to;
         applyLinkAppearance(line,link);
@@ -1015,6 +1065,7 @@ function drawLinks(){
         linksLayer.appendChild(hit);
         linksLayer.appendChild(line);
         drawLinkLabel(link,from,to);
+        drawWaypointHandles(link);
 
     });
 
@@ -1023,18 +1074,104 @@ function drawLinks(){
 function drawLinkLabel(link,from,to){
     if(!link.label) return;
     const appearance=getLinkAppearance(link);
+    const labelPoint=getRouteLabelPoint(link,from,to);
     const text=document.createElementNS(SVGNS,"text");
     text.classList.add("linkLabel");
     text.textContent=link.label;
     if(appearance.labelFollowsLine!==false){
-        const angle=Math.atan2(to.y-from.y,to.x-from.x)*180/Math.PI;
-        text.setAttribute("transform",`translate(${(from.x+to.x)/2},${(from.y+to.y)/2-7}) rotate(${angle>90||angle< -90?angle+180:angle})`);
+        const angle=labelPoint.angle;
+        text.setAttribute("transform",`translate(${labelPoint.x},${labelPoint.y-7}) rotate(${angle>90||angle< -90?angle+180:angle})`);
     }else{
-        text.setAttribute("x",(from.x+to.x)/2);
-        text.setAttribute("y",(from.y+to.y)/2-7);
+        text.setAttribute("x",labelPoint.x);
+        text.setAttribute("y",labelPoint.y-7);
         text.setAttribute("text-anchor","middle");
     }
     linksLayer.appendChild(text);
+}
+
+function drawWaypointHandles(link){
+    if(!selectedLink || selectedLink.id!==link.id || link.routing!=="custom") return;
+    link.route.forEach((point,index)=>{
+        const handle=document.createElementNS(SVGNS,"circle");
+        handle.classList.add("waypointHandle");
+        if(selectedWaypointIndex===index) handle.classList.add("selectedWaypoint");
+        handle.setAttribute("cx",point.x);handle.setAttribute("cy",point.y);handle.setAttribute("r",6);
+        handle.dataset.linkId=link.id;handle.dataset.waypointIndex=index;
+        handle.addEventListener("pointerdown",startWaypointDrag);
+        handle.addEventListener("click",e=>{e.stopPropagation();selectedWaypointIndex=index;drawLinksOnly();});
+        linksLayer.appendChild(handle);
+    });
+}
+
+function startWaypointDrag(e){
+    e.preventDefault();e.stopPropagation();
+    const link=links.find(item=>item.id===e.currentTarget.dataset.linkId);
+    if(!link) return;
+    selectedLink=link;selectedWaypointIndex=Number(e.currentTarget.dataset.waypointIndex);
+    waypointDrag={link,index:selectedWaypointIndex,pointerId:e.pointerId,startRoute:link.route.map(point=>({...point}))};
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+}
+
+function moveWaypoint(e){
+    if(!waypointDrag || e.pointerId!==waypointDrag.pointerId) return false;
+    e.preventDefault();
+    const point=getViewportPoint(e);
+    waypointDrag.link.route[waypointDrag.index]=getSnappedPosition(point.x,point.y);
+    drawLinksOnly();
+    return true;
+}
+
+function stopWaypointDrag(e){
+    if(!waypointDrag || (e&&e.pointerId!==waypointDrag.pointerId)) return;
+    const {link,startRoute}=waypointDrag;
+    const endRoute=link.route.map(point=>({...point}));
+    if(!statesAreEqual(startRoute,endRoute)){
+        link.route=startRoute.map(point=>({...point}));recordHistory();link.route=endRoute;
+        saveToLocalStorage();
+    }
+    waypointDrag=null;drawLinksOnly();
+}
+
+function addWaypointAt(point){
+    if(!selectedLink) return;
+    recordHistory();
+    selectedLink.routing="custom";
+    const snapped=getSnappedPosition(point.x,point.y);
+    const controls=[findCenter(selectedLink.from),...selectedLink.route,findCenter(selectedLink.to)];
+    let insertAt=selectedLink.route.length,best=Infinity;
+    for(let i=0;i<controls.length-1;i++){
+        const a=controls[i],b=controls[i+1],dx=b.x-a.x,dy=b.y-a.y;
+        const t=Math.max(0,Math.min(1,((snapped.x-a.x)*dx+(snapped.y-a.y)*dy)/(dx*dx+dy*dy||1)));
+        const distance=Math.hypot(snapped.x-(a.x+t*dx),snapped.y-(a.y+t*dy));
+        if(distance<best){best=distance;insertAt=i;}
+    }
+    selectedLink.route.splice(insertAt,0,snapped);
+    selectedWaypointIndex=insertAt;
+    syncRoutingControls();render();saveToLocalStorage();
+}
+
+function addDefaultWaypoint(){
+    if(!selectedLink) return;
+    const from=findCenter(selectedLink.from),to=findCenter(selectedLink.to);
+    const points=getOrthogonalPoints(selectedLink,from,to);
+    let a=from,b=to,max=-1;
+    for(let i=1;i<points.length;i++){
+        const length=Math.hypot(points[i].x-points[i-1].x,points[i].y-points[i-1].y);
+        if(length>max){max=length;a=points[i-1];b=points[i];}
+    }
+    addWaypointAt({x:(a.x+b.x)/2,y:(a.y+b.y)/2});
+}
+
+function deleteSelectedWaypoint(){
+    if(!selectedLink || selectedWaypointIndex===null || !selectedLink.route[selectedWaypointIndex]) return false;
+    recordHistory();selectedLink.route.splice(selectedWaypointIndex,1);selectedWaypointIndex=null;
+    render();saveToLocalStorage();return true;
+}
+
+function resetSelectedRoute(){
+    if(!selectedLink) return;
+    recordHistory();selectedLink.route=[];selectedLink.routing="straight";selectedWaypointIndex=null;
+    syncRoutingControls();render();saveToLocalStorage();
 }
 
 /* ==========================================================
@@ -1070,6 +1207,7 @@ function selectNode(e){
 
     selectedNode=nodes.find(x=>x.id===id);
     selectedLink=null;
+    selectedWaypointIndex=null;
 if(linkMode){
 
     if(firstLinkNode==null){
@@ -1274,6 +1412,8 @@ svg.addEventListener("contextmenu",function(e){
 });
 svg.addEventListener("pointermove",function(e){
 
+    if(moveWaypoint(e)) return;
+
     if(panMode){
 
     viewX=e.clientX-panStartX;
@@ -1347,6 +1487,8 @@ function stopDrag(e){
 
 window.addEventListener("pointerup",stopDrag);
 window.addEventListener("pointercancel",stopDrag);
+window.addEventListener("pointerup",stopWaypointDrag);
+window.addEventListener("pointercancel",stopWaypointDrag);
 
 /* ==========================================================
    REDRAW LINKS ONLY
@@ -1361,12 +1503,10 @@ function drawLinksOnly(){
         const from=findCenter(link.from);
         const to=findCenter(link.to);
 
-        const hit=document.createElementNS(SVGNS,"line");
+        const hit=document.createElementNS(SVGNS,"path");
 
-        hit.setAttribute("x1",from.x);
-        hit.setAttribute("y1",from.y);
-        hit.setAttribute("x2",to.x);
-        hit.setAttribute("y2",to.y);
+        hit.setAttribute("d",getLinkPathData(link,from,to));
+        hit.setAttribute("fill","none");
 
         hit.setAttribute("stroke","transparent");
         hit.setAttribute("stroke-width","16");
@@ -1381,16 +1521,14 @@ function drawLinksOnly(){
             selectLinkById(this.dataset.linkId);
 
         });
+        hit.addEventListener("dblclick",function(e){e.stopPropagation();selectLinkById(link.id);addWaypointAt(getViewportPoint(e));});
 
-        const line=document.createElementNS(SVGNS,"line");
+        const line=document.createElementNS(SVGNS,"path");
 
         line.classList.add("link");
         line.style.pointerEvents="none";
 
-        line.setAttribute("x1",from.x);
-        line.setAttribute("y1",from.y);
-        line.setAttribute("x2",to.x);
-        line.setAttribute("y2",to.y);
+        line.setAttribute("d",getLinkPathData(link,from,to));
         line.dataset.from=link.from;
         line.dataset.to=link.to;
         applyLinkAppearance(line,link);
@@ -1404,6 +1542,7 @@ function drawLinksOnly(){
         linksLayer.appendChild(hit);
         linksLayer.appendChild(line);
         drawLinkLabel(link,from,to);
+        drawWaypointHandles(link);
 
     });
 
@@ -1723,7 +1862,8 @@ function buildExportSVG(){
     exportSvg.appendChild(createExportStyles());
     const group=document.createElementNS(SVGNS,"g");
     const exportLinks=linksLayer.cloneNode(true);
-    exportLinks.querySelectorAll('line[stroke="transparent"]').forEach(line=>line.remove());
+    exportLinks.querySelectorAll('[stroke="transparent"]').forEach(hit=>hit.remove());
+    exportLinks.querySelectorAll(".waypointHandle").forEach(handle=>handle.remove());
     const exportNodes=nodesLayer.cloneNode(true);
     exportNodes.querySelectorAll(".selected").forEach(node=>node.classList.remove("selected"));
     group.append(exportLinks,exportNodes); exportSvg.appendChild(group);
@@ -1964,6 +2104,9 @@ const propLinkLabel=document.getElementById("propLinkLabel");
 const propSourcePort=document.getElementById("propSourcePort");
 const propTargetPort=document.getElementById("propTargetPort");
 const propLabelFollowsLine=document.getElementById("propLabelFollowsLine");
+const propLinkRouting=document.getElementById("propLinkRouting");
+const btnAddWaypoint=document.getElementById("btnAddWaypoint");
+const btnResetRoute=document.getElementById("btnResetRoute");
 
 function updateSelectedLinkAppearance(){
 
@@ -2014,6 +2157,18 @@ function updateSelectedLinkAppearance(){
     selectedLink.appearance={...getLinkAppearance(selectedLink),labelFollowsLine:propLabelFollowsLine.checked};
     render(); saveToLocalStorage();
 }));
+
+propLinkRouting.addEventListener("change",function(){
+    if(!selectedLink) return;
+    recordHistory();selectedLink.routing=this.value;
+    if(this.value==="custom" && selectedLink.route.length===0){
+        const from=findCenter(selectedLink.from),to=findCenter(selectedLink.to);
+        selectedLink.route=[getSnappedPosition((from.x+to.x)/2,(from.y+to.y)/2)];
+    }
+    selectedWaypointIndex=null;syncRoutingControls();render();saveToLocalStorage();
+});
+btnAddWaypoint.onclick=addDefaultWaypoint;
+btnResetRoute.onclick=resetSelectedRoute;
 
 btnDeleteLink.onclick=function(){
 
@@ -2225,6 +2380,8 @@ document.addEventListener("keydown",function(e){
 
     if(e.key!=="Delete") return;
 
+    if(deleteSelectedWaypoint()) return;
+
     if(selectedLink){
 
         deleteSelectedLink();
@@ -2261,7 +2418,7 @@ function deleteNodeById(id){
     nodes.splice(idx,1);
     for(let i=links.length-1;i>=0;i--) if(links[i].from===id||links[i].to===id) links.splice(i,1);
     if(firstLinkNode?.id===id) cancelLinkMode();
-    selectedNode=null; selectedElement=null; selectedLink=null; contextTarget=null;
+    selectedNode=null; selectedElement=null; selectedLink=null; selectedWaypointIndex=null; contextTarget=null;
     showNodeProperties(); render(); saveToLocalStorage();
 }
 cmRename.onclick=function(){
