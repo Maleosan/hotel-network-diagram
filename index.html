@@ -175,6 +175,19 @@
 
             <input id="propLinkLabel" maxlength="80">
 
+            <label for="propLinkRouting">Routing</label>
+
+            <select id="propLinkRouting">
+                <option value="straight">Straight</option>
+                <option value="custom">Custom / Orthogonal</option>
+            </select>
+
+            <div id="routeControls" hidden>
+                <button id="btnAddWaypoint" type="button">Add Bend Point</button>
+                <button id="btnResetRoute" type="button">Reset Route</button>
+                <small>Drag bend points to shape the route. Double-click a segment to add one; select a point and press Delete to remove it.</small>
+            </div>
+
             <label for="propSourcePort">Source Port</label>
 
             <select id="propSourcePort"></select>
