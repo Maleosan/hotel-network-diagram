@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Hotel Network Diagram</title>
+
+<link rel="stylesheet" href="style.css">
+
+</head>
+<input
+    type="file"
+    id="fileOpen"
+    accept=".json"
+    style="display:none">
+<body>
+
+<div id="toolbar">
+
+    <div class="logo">
+        HOTEL NETWORK DIAGRAM
+    </div>
+
+    <div class="tools">
+
+        <button id="btnOpen">Open</button>
+
+<button id="btnSave">Save</button>
+
+<button id="btnUndo" disabled>Undo</button>
+
+<button id="btnRedo" disabled>Redo</button>
+
+<button id="btnAddDevice">+ Add Device</button>
+
+<button id="btnAddLink">+ Add Link</button>
+
+<button id="btnExportPNG">Export PNG</button>
+
+        <button id="btnExportSVG">Export SVG</button>
+
+        <button id="btnReset">Reset View</button>
+
+        <button id="btnResetDefault">Reset to Default Diagram</button>
+
+        <button id="btnGrid" class="toggle active">Grid</button>
+
+        <button id="btnSnap" class="toggle active">Snap</button>
+
+        <button id="btnTheme">Dark / Light</button>
+
+    </div>
+
+</div>
+
+
+<div id="workspace">
+
+    <div id="canvasContainer">
+
+        <svg id="diagram">
+
+            <defs>
+
+                <pattern id="smallGrid"
+                    width="20"
+                    height="20"
+                    patternUnits="userSpaceOnUse">
+
+                    <path
+                        d="M20 0 L0 0 0 20"
+                        fill="none"
+                        stroke="#ffffff"
+                        stroke-opacity="0.05"
+                        stroke-width="0.6"/>
+
+                </pattern>
+
+                <pattern id="grid"
+                    width="100"
+                    height="100"
+                    patternUnits="userSpaceOnUse">
+
+                    <rect width="100"
+                          height="100"
+                          fill="url(#smallGrid)"/>
+
+                    <path
+                        d="M100 0 L0 0 0 100"
+                        fill="none"
+                        stroke="#ffffff"
+                        stroke-opacity="0.09"
+                        stroke-width="0.8"/>
+
+                </pattern>
+
+            </defs>
+
+            <g id="gridLayer">
+
+    <rect
+        id="gridBackground"
+        x="-10000"
+        y="-10000"
+        width="20000"
+        height="20000"
+        fill="url(#grid)"/>
+
+</g>
+
+<g id="viewport">
+
+    <g id="links"></g>
+
+    <g id="nodes"></g>
+
+</g>
+
+        </svg>
+
+    </div>
+
+
+
+    <div id="propertyPanel">
+
+        <h2>Properties</h2>
+
+        <div id="nodeProperties">
+
+            <label>Name</label>
+
+            <input id="propName">
+
+            <label>IP Address</label>
+
+            <input id="propIP">
+
+            <label>Model</label>
+
+            <input id="propModel">
+
+            <label>Location</label>
+
+            <input id="propLocation">
+
+            <label>Notes</label>
+
+            <textarea
+                id="propNotes"
+                rows="8"></textarea>
+
+            <button id="btnUpdate">
+
+                Update
+
+            </button>
+
+        </div>
+
+        <div id="linkProperties" style="display:none;">
+
+            <label>Connection</label>
+
+            <input id="propLinkName" readonly>
+
+            <label>Color</label>
+
+            <input id="propLinkColor" type="color">
+
+            <label>Width</label>
+
+            <input id="propLinkWidth" type="number" min="1" max="16" step="1">
+
+            <label>Style</label>
+
+            <select id="propLinkStyle">
+                <option value="solid">Solid</option>
+                <option value="dashed">Dashed</option>
+                <option value="dotted">Dotted</option>
+            </select>
+
+            <label>Opacity</label>
+
+            <input id="propLinkOpacity" type="range" min="0.1" max="1" step="0.05">
+
+            <button id="btnDeleteLink">
+
+                Delete Connection
+
+            </button>
+
+        </div>
+
+    </div>
+
+</div>
+
+
+
+<div id="statusBar">
+
+    Ready
+
+</div>
+
+<div id="deviceModal" class="modal">
+
+    <div class="modalContent">
+
+        <h2>Add Device</h2>
+
+   <select id="deviceType">
+
+    <option value="router">Router</option>
+    <option value="switch">Switch</option>
+    <option value="ap">Access Point</option>
+    <option value="pc">PC</option>
+    <option value="nas">NAS</option>
+    <option value="camera">Camera</option>
+    <option value="dvr">DVR</option>
+    <option value="pabx">PABX</option>
+    <option value="cloud">Cloud</option>
+
+</select>
+    <label id="lblModel" style="display:none;">Model</label>
+
+<select id="deviceModel" style="display:none;">
+</select>
+
+<br><br>
+
+<label id="lblPortCount" style="display:none;">Port Count</label>
+
+<select id="devicePortCount" style="display:none;">
+    <option>5</option>
+    <option>8</option>
+    <option>10</option>
+    <option>13</option>
+    <option>16</option>
+    <option>24</option>
+    <option>48</option>
+    <option>52</option>
+</select>
+
+        <br><br>
+
+        <button id="btnCreateDevice">Create</button>
+
+        <button id="btnCloseDevice">Close</button>
+
+    </div>
+
+</div>
+
+<div id="contextMenu" class="contextMenu">
+
+    <div id="cmRename">Rename</div>
+
+    <div id="cmDuplicate">Duplicate</div>
+
+    <div id="cmDelete">Delete</div>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+
+</html>

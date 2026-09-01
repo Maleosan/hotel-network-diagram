@@ -1,0 +1,516 @@
+/* ==========================================================
+   HOTEL NETWORK DIAGRAM
+   style.css
+========================================================== */
+
+*{
+    margin:0;
+    padding:0;
+    box-sizing:border-box;
+    font-family:Segoe UI,Arial,sans-serif;
+}
+
+html,body{
+    width:100%;
+    height:100%;
+    overflow:hidden;
+    background:#181818;
+    color:#eaeaea;
+}
+
+/* =======================================================
+   TOP TOOLBAR
+======================================================= */
+
+#toolbar{
+
+    height:58px;
+
+    background:#232323;
+
+    border-bottom:1px solid #444;
+
+    display:flex;
+
+    align-items:center;
+
+    justify-content:space-between;
+
+    padding:0 15px;
+
+}
+
+.logo{
+
+    font-size:20px;
+
+    font-weight:bold;
+
+    color:#00d4ff;
+
+    letter-spacing:1px;
+
+}
+
+.tools{
+
+    display:flex;
+
+    gap:8px;
+
+}
+
+.tools button{
+
+    height:36px;
+
+    padding:0 18px;
+
+    background:#3b3b3b;
+
+    border:none;
+
+    border-radius:6px;
+
+    color:white;
+
+    cursor:pointer;
+
+    transition:.2s;
+
+}
+
+.tools button:hover{
+
+    background:#0094ff;
+
+}
+
+.tools button.toggle.active{
+
+    background:#0077c8;
+
+    box-shadow:inset 0 0 0 1px #00d4ff;
+
+}
+
+/* =======================================================
+   MAIN
+======================================================= */
+
+#workspace{
+
+    display:flex;
+
+    width:100%;
+
+    height:calc(100vh - 88px);
+
+}
+
+/* =======================================================
+   CANVAS
+======================================================= */
+
+#canvasContainer{
+
+    flex:1;
+
+    background:#202020;
+
+    position:relative;
+
+    overflow:hidden;
+
+}
+
+#diagram{
+
+    width:100%;
+
+    height:100%;
+
+    cursor:grab;
+
+    touch-action:none;
+
+}
+
+#diagram:active{
+
+    cursor:grabbing;
+
+}
+
+#gridLayer{
+
+    pointer-events:none;
+
+}
+
+#gridLayer.hidden{
+
+    display:none;
+
+}
+
+/* =======================================================
+   PROPERTY PANEL
+======================================================= */
+
+#propertyPanel{
+
+    width:320px;
+
+    background:#2a2a2a;
+
+    border-left:1px solid #444;
+
+    padding:20px;
+
+    overflow:auto;
+
+}
+
+#propertyPanel h2{
+
+    margin-bottom:20px;
+
+    color:#00d4ff;
+
+}
+
+#propertyPanel label{
+
+    display:block;
+
+    margin-top:12px;
+
+    margin-bottom:6px;
+
+    font-size:13px;
+
+}
+
+#propertyPanel input,
+
+#propertyPanel textarea,
+
+#propertyPanel select{
+
+    width:100%;
+
+    padding:10px;
+
+    background:#181818;
+
+    border:1px solid #444;
+
+    border-radius:6px;
+
+    color:white;
+
+}
+
+#propertyPanel textarea{
+
+    resize:vertical;
+
+}
+
+#propertyPanel input[type="color"]{
+
+    height:42px;
+
+    padding:4px;
+
+}
+
+#propertyPanel input[readonly]{
+
+    color:#bdbdbd;
+
+}
+
+#btnDeleteLink{
+
+    width:100%;
+
+    margin-top:18px;
+
+    height:40px;
+
+    border:none;
+
+    background:#c62828;
+
+    color:white;
+
+    border-radius:6px;
+
+    cursor:pointer;
+
+}
+
+#btnDeleteLink:hover{
+
+    background:#a31515;
+
+}
+
+#btnUpdate{
+
+    width:100%;
+
+    margin-top:18px;
+
+    height:40px;
+
+    border:none;
+
+    background:#00a8ff;
+
+    color:white;
+
+    border-radius:6px;
+
+    cursor:pointer;
+
+}
+
+#btnUpdate:hover{
+
+    background:#0082c8;
+
+}
+
+/* =======================================================
+   STATUS BAR
+======================================================= */
+
+#statusBar{
+
+    height:30px;
+
+    background:#232323;
+
+    border-top:1px solid #444;
+
+    display:flex;
+
+    align-items:center;
+
+    padding-left:15px;
+
+    font-size:12px;
+
+}
+
+/* =======================================================
+   SVG NODE STYLE
+======================================================= */
+
+.node{
+
+    cursor:pointer;
+
+    touch-action:none;
+
+}
+
+.node *{
+
+    touch-action:none;
+
+}
+
+.node rect{
+
+    fill:#2f3b52;
+
+    stroke:#5ea8ff;
+
+    stroke-width:2;
+
+    rx:8;
+
+}
+
+.node text{
+
+    fill:white;
+
+    font-size:13px;
+
+    text-anchor:middle;
+
+    dominant-baseline:middle;
+
+    pointer-events:none;
+
+}
+
+.link{
+
+    stroke:#cfcfcf;
+
+    stroke-width:2;
+
+    fill:none;
+
+}
+
+.link.selectedLink{
+
+    filter:drop-shadow(0 0 4px #ff9800);
+
+}
+
+/* =======================================================
+   SELECTED
+======================================================= */
+
+.node circle{
+    fill:#2f3136;
+    stroke:#5ea8ff;
+    stroke-width:2;
+}
+
+.selected circle{
+    stroke:#ff9800;
+    stroke-width:3;
+}
+
+    stroke:#ff9800;
+
+    stroke-width:3;
+
+}
+
+/* =======================================================
+   SCROLLBAR
+======================================================= */
+
+::-webkit-scrollbar{
+
+    width:10px;
+
+}
+
+::-webkit-scrollbar-track{
+
+    background:#202020;
+
+}
+
+::-webkit-scrollbar-thumb{
+
+    background:#555;
+
+}
+
+::-webkit-scrollbar-thumb:hover{
+
+    background:#777;
+
+}
+.deviceIcon{
+    fill:#2f3136;
+    stroke:#00c8ff;
+    stroke-width:2;
+}
+
+.node text{
+    fill:white;
+    user-select:none;
+}
+.modal{
+
+    display:none;
+
+    position:fixed;
+
+    inset:0;
+
+    background:rgba(0,0,0,.55);
+
+    justify-content:center;
+
+    align-items:center;
+
+    z-index:999;
+
+}
+
+.modalContent{
+
+    width:320px;
+
+    background:#2b2b2b;
+
+    border-radius:8px;
+
+    padding:20px;
+
+}
+
+.modalContent h2{
+
+    margin-bottom:15px;
+
+}
+
+.modalContent select{
+
+    width:100%;
+
+    height:38px;
+
+    background:#181818;
+
+    color:#fff;
+
+}
+
+.modalContent button{
+
+    margin-top:15px;
+
+    margin-right:8px;
+
+    padding:8px 16px;
+
+}
+.contextMenu{
+
+    position:fixed;
+
+    display:none;
+
+    background:#2b2b2b;
+
+    border:1px solid #555;
+
+    border-radius:6px;
+
+    overflow:hidden;
+
+    z-index:9999;
+
+    min-width:150px;
+
+}
+
+.contextMenu div{
+
+    padding:10px 15px;
+
+    cursor:pointer;
+
+}
+
+.contextMenu div:hover{
+
+    background:#3c3c3c;
+
+}
