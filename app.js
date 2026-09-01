@@ -49,6 +49,8 @@ let gridEnabled = true;
 let snapEnabled = true;
 let diagramName = "HOTEL NETWORK DIAGRAM";
 let theme = "dark";
+let diagramBackground={type:"dark",color:"#202020",data:"",fit:"cover"};
+let pendingDeviceIconData="";
 const DEVICE_TYPES = new Set(["router","switch","ap","pc","nas","camera","dvr","pabx","cloud"]);
 const DEFAULT_PORTS = {router:5,switch:24,ap:1,pc:1,nas:2,camera:1,dvr:16,pabx:8,cloud:0};
 
@@ -280,7 +282,8 @@ function cloneDiagramState(){
 
         nodes:nodes.map(node=>({...node})),
         links:links.map(cloneLink),
-        diagramName
+        diagramName,
+        background:{...diagramBackground}
 
     };
 
@@ -304,6 +307,8 @@ function restoreDiagramState(state,shouldPersist=true){
 
     });
     diagramName=state.diagramName || diagramName;
+    diagramBackground={...diagramBackground,...(state.background||{})};
+    applyDiagramBackground();
     document.getElementById("diagramName").value=diagramName;
 
     selectedNode=null;
@@ -446,6 +451,71 @@ function showFeedback(message,isError=false){
     showFeedback.timer=setTimeout(()=>{bar.textContent="Ready";bar.style.color="";},4000);
 }
 
+function isSafeImageData(value){
+    return typeof value==="string" && /^data:image\/(png|jpeg|webp|svg\+xml);base64,/i.test(value);
+}
+
+function processImageFile(file,maxWidth,maxHeight,quality=.82){
+    return new Promise((resolve,reject)=>{
+        if(!file || !/^image\/(png|jpeg|webp|svg\+xml)$/i.test(file.type)) return reject(new Error("Pilih file PNG, JPG, SVG, atau WEBP"));
+        if(file.size>8*1024*1024) return reject(new Error("Ukuran gambar maksimal 8 MB"));
+        const reader=new FileReader();
+        reader.onerror=()=>reject(new Error("File gambar tidak dapat dibaca"));
+        reader.onload=()=>{
+            const image=new Image();
+            image.onerror=()=>reject(new Error("File gambar rusak atau tidak didukung"));
+            image.onload=()=>{
+                const sourceWidth=image.naturalWidth||maxWidth,sourceHeight=image.naturalHeight||maxHeight;
+                const scale=Math.min(1,maxWidth/sourceWidth,maxHeight/sourceHeight);
+                const canvas=document.createElement("canvas");
+                canvas.width=Math.max(1,Math.round(sourceWidth*scale));canvas.height=Math.max(1,Math.round(sourceHeight*scale));
+                const context=canvas.getContext("2d");
+                if(!context) return reject(new Error("Browser tidak mendukung pemrosesan gambar"));
+                context.drawImage(image,0,0,canvas.width,canvas.height);
+                try{resolve(canvas.toDataURL(file.type==="image/jpeg"?"image/jpeg":"image/png",quality));}
+                catch(error){reject(new Error("Gambar gagal diproses"));}
+            };
+            image.src=reader.result;
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
+function normalizeBackground(background){
+    const value=background&&typeof background==="object"?background:{};
+    const type=["dark","light","color","image","transparent"].includes(value.type)?value.type:"dark";
+    return{type,color:/^#[0-9a-f]{6}$/i.test(value.color)?value.color:"#202020",data:type==="image"&&isSafeImageData(value.data)?value.data:"",fit:["cover","contain","center","repeat"].includes(value.fit)?value.fit:"cover"};
+}
+
+function applyDiagramBackground(){
+    const container=document.getElementById("canvasContainer");
+    if(!container) return;
+    const bg=diagramBackground;
+    container.style.backgroundColor=bg.type==="light"?"#ffffff":bg.type==="dark"?"#202020":bg.type==="color"?bg.color:"transparent";
+    container.style.backgroundImage=bg.type==="image"&&bg.data?`url("${bg.data}")`:"none";
+    container.style.backgroundRepeat=bg.fit==="repeat"?"repeat":"no-repeat";
+    container.style.backgroundPosition="center";
+    container.style.backgroundSize=bg.fit==="center"?"auto":bg.fit==="repeat"?"auto":bg.fit;
+    const light=bg.type==="light"||(bg.type==="color"&&isLightColor(bg.color));
+    document.querySelectorAll("#smallGrid path,#grid path").forEach(path=>path.setAttribute("stroke",light?"#506070":"#ffffff"));
+    updateBackgroundPreview();
+}
+
+function isLightColor(color){
+    const value=parseInt(String(color).slice(1),16);if(!Number.isFinite(value))return false;
+    return (((value>>16)&255)*299+((value>>8)&255)*587+(value&255)*114)/1000>170;
+}
+
+function updateBackgroundPreview(){
+    const preview=document.getElementById("backgroundPreview");
+    if(!preview) return;
+    const bg=diagramBackground;
+    preview.style.backgroundColor=bg.type==="light"?"#fff":bg.type==="dark"?"#202020":bg.type==="color"?bg.color:"transparent";
+    preview.style.backgroundImage=bg.type==="image"&&bg.data?`url("${bg.data}")`:"none";
+    preview.style.backgroundSize=bg.fit==="center"||bg.fit==="repeat"?"auto":bg.fit;
+    preview.style.backgroundRepeat=bg.fit==="repeat"?"repeat":"no-repeat";
+}
+
 function isEditingTarget(target){
     return target && (target.matches("input,textarea,select") || target.isContentEditable);
 }
@@ -552,6 +622,17 @@ function drawNode(node){
     icon.setAttribute("fill","none");
     icon.setAttribute("stroke-linecap","round");
     icon.setAttribute("stroke-linejoin","round");
+
+    if(node.iconType==="custom" && isSafeImageData(node.iconData)){
+        const customIcon=document.createElementNS(SVGNS,"image");
+        customIcon.setAttribute("x",19);customIcon.setAttribute("y",4);
+        customIcon.setAttribute("width",52);customIcon.setAttribute("height",52);
+        customIcon.setAttribute("preserveAspectRatio","xMidYMid meet");
+        customIcon.setAttribute("href",node.iconData);
+        customIcon.style.pointerEvents="none";
+        g.appendChild(customIcon);
+        icon.style.display="none";
+    }
 
    if(node.type==="cloud"){
     drawCloud(icon);
@@ -1281,8 +1362,26 @@ if(linkMode){
     document.getElementById("propNotes").value=
         selectedNode.notes || "";
 
+    updateNodeMediaPreviews();
+
     showNodeProperties();
 
+}
+
+function setPreview(element,data,emptyText){
+    element.innerHTML="";
+    if(isSafeImageData(data)){
+        const image=document.createElement("img");image.src=data;image.alt="Preview";element.appendChild(image);
+    }else element.textContent=emptyText;
+}
+
+function updateNodeMediaPreviews(){
+    if(!selectedNode) return;
+    setPreview(document.getElementById("propIconPreview"),selectedNode.iconType==="custom"?selectedNode.iconData:"","Default icon");
+    setPreview(document.getElementById("propPicturePreview"),selectedNode.pictureData,"No picture");
+    document.getElementById("btnResetIcon").disabled=selectedNode.iconType!=="custom";
+    document.getElementById("btnChangePicture").textContent=selectedNode.pictureData?"Change Picture":"Add Picture";
+    document.getElementById("btnRemovePicture").disabled=!selectedNode.pictureData;
 }
 
 /* ==========================================================
@@ -1605,6 +1704,9 @@ function createLayoutData(){
             portCount:getPortCount(node),
             location:node.location || "",
             notes:node.notes || "",
+            iconType:node.iconType==="custom"?"custom":"default",
+            iconData:node.iconType==="custom"&&isSafeImageData(node.iconData)?node.iconData:"",
+            pictureData:isSafeImageData(node.pictureData)?node.pictureData:"",
             x:node.x,
             y:node.y
 
@@ -1619,6 +1721,7 @@ function createLayoutData(){
         ,theme:theme
         ,gridEnabled:gridEnabled
         ,snapEnabled:snapEnabled
+        ,background:{...diagramBackground}
 
     };
 
@@ -1638,6 +1741,7 @@ function saveToLocalStorage(){
     }catch(e){
 
         console.warn("Unable to auto-save diagram",e);
+        showFeedback("Penyimpanan browser penuh. Kurangi ukuran/jumlah gambar atau simpan JSON.",true);
 
     }
 
@@ -1738,7 +1842,10 @@ function loadLayout(data){
         ids.add(id);
         nextNodes.push({id,type,text:String(n.text||type.toUpperCase()).slice(0,80),ip:String(n.ip||""),
             model:String(n.model||""),portCount:Math.min(512,Math.max(0,Number.isInteger(Number(n.portCount))?Number(n.portCount):(DEFAULT_PORTS[type]||0))),
-            location:String(n.location||""),notes:String(n.notes||""),x,y});
+            location:String(n.location||""),notes:String(n.notes||""),
+            iconType:n.iconType==="custom"&&isSafeImageData(n.iconData)?"custom":"default",
+            iconData:n.iconType==="custom"&&isSafeImageData(n.iconData)?n.iconData:"",
+            pictureData:isSafeImageData(n.pictureData)?n.pictureData:"",x,y});
     });
 
     const nextLinks=[];
@@ -1773,10 +1880,12 @@ function loadLayout(data){
     theme=layout.theme==="light"?"light":"dark";
     gridEnabled=layout.gridEnabled!==false;
     snapEnabled=layout.snapEnabled!==false;
+    diagramBackground=normalizeBackground(layout.background);
     selectedNode=null; selectedElement=null; selectedLink=null; contextTarget=null; firstLinkNode=null; linkMode=false;
     const cancelButton=document.getElementById("btnCancelLink");
     if(cancelButton) cancelButton.hidden=true;
     applyTheme();
+    applyDiagramBackground();
     document.getElementById("diagramName").value=diagramName;
 
     undoHistory.splice(0,undoHistory.length);
@@ -1860,6 +1969,7 @@ function buildExportSVG(){
     exportSvg.setAttribute("viewBox",`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`);
     exportSvg.setAttribute("aria-label",diagramName);
     exportSvg.appendChild(createExportStyles());
+    appendExportBackground(exportSvg,bounds);
     const group=document.createElementNS(SVGNS,"g");
     const exportLinks=linksLayer.cloneNode(true);
     exportLinks.querySelectorAll('[stroke="transparent"]').forEach(hit=>hit.remove());
@@ -1868,6 +1978,25 @@ function buildExportSVG(){
     exportNodes.querySelectorAll(".selected").forEach(node=>node.classList.remove("selected"));
     group.append(exportLinks,exportNodes); exportSvg.appendChild(group);
     return {exportSvg,bounds};
+}
+
+function appendExportBackground(exportSvg,bounds){
+    const bg=diagramBackground;
+    if(bg.type==="transparent") return;
+    if(bg.type==="image"&&bg.data){
+        if(bg.fit==="repeat"){
+            const defs=document.createElementNS(SVGNS,"defs"),pattern=document.createElementNS(SVGNS,"pattern"),image=document.createElementNS(SVGNS,"image");
+            pattern.id="exportBackgroundPattern";pattern.setAttribute("width",256);pattern.setAttribute("height",256);pattern.setAttribute("patternUnits","userSpaceOnUse");
+            image.setAttribute("href",bg.data);image.setAttribute("width",256);image.setAttribute("height",256);image.setAttribute("preserveAspectRatio","xMidYMid meet");pattern.appendChild(image);defs.appendChild(pattern);exportSvg.appendChild(defs);
+            const rect=document.createElementNS(SVGNS,"rect");rect.setAttribute("x",bounds.x);rect.setAttribute("y",bounds.y);rect.setAttribute("width",bounds.width);rect.setAttribute("height",bounds.height);rect.setAttribute("fill","url(#exportBackgroundPattern)");exportSvg.appendChild(rect);
+        }else{
+            const image=document.createElementNS(SVGNS,"image");image.setAttribute("href",bg.data);image.setAttribute("x",bounds.x);image.setAttribute("y",bounds.y);image.setAttribute("width",bounds.width);image.setAttribute("height",bounds.height);image.setAttribute("preserveAspectRatio",bg.fit==="cover"?"xMidYMid slice":bg.fit==="contain"?"xMidYMid meet":"xMidYMid meet");exportSvg.appendChild(image);
+        }
+        return;
+    }
+    const rect=document.createElementNS(SVGNS,"rect");
+    rect.setAttribute("x",bounds.x);rect.setAttribute("y",bounds.y);rect.setAttribute("width",bounds.width);rect.setAttribute("height",bounds.height);
+    rect.setAttribute("fill",bg.type==="light"?"#ffffff":bg.type==="color"?bg.color:"#202020");exportSvg.appendChild(rect);
 }
 
 function downloadBlob(blob,filename){
@@ -1894,37 +2023,16 @@ function applyTheme(){
     const button=document.getElementById("btnTheme");
     if(button){button.setAttribute("aria-pressed",String(theme==="light"));button.textContent=theme==="light"?"Use Dark":"Use Light";}
     document.querySelectorAll("#smallGrid path,#grid path").forEach(path=>path.setAttribute("stroke",theme==="light"?"#506070":"#ffffff"));
+    if(document.getElementById("canvasContainer")) applyDiagramBackground();
 }
 
 function exportPNG(){
 
-    let bounds;
-    try{bounds=buildExportSVG().bounds;}catch(error){showFeedback("Diagram tidak dapat diekspor",true);return;}
+    let bounds,exportSvg;
+    try{({bounds,exportSvg}=buildExportSVG());}catch(error){showFeedback("Diagram tidak dapat diekspor",true);return;}
     const scale=4;
 
     if(bounds.width*scale>16384 || bounds.height*scale>16384){showFeedback("Diagram terlalu besar untuk PNG",true);return;}
-
-    const exportSvg=document.createElementNS(SVGNS,"svg");
-
-    exportSvg.setAttribute("xmlns",SVGNS);
-    exportSvg.setAttribute("width",bounds.width);
-    exportSvg.setAttribute("height",bounds.height);
-    exportSvg.setAttribute("viewBox",`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`);
-
-    exportSvg.appendChild(createExportStyles());
-
-    const exportViewport=document.createElementNS(SVGNS,"g");
-    const exportLinks=linksLayer.cloneNode(true);
-    const exportNodes=nodesLayer.cloneNode(true);
-
-    exportNodes
-        .querySelectorAll(".selected")
-        .forEach(node=>node.classList.remove("selected"));
-
-    exportViewport.appendChild(exportLinks);
-    exportViewport.appendChild(exportNodes);
-
-    exportSvg.appendChild(exportViewport);
 
     const svgText=new XMLSerializer().serializeToString(exportSvg);
     const blob=new Blob([svgText],{type:"image/svg+xml;charset=utf-8"});
@@ -2033,6 +2141,7 @@ updateView();
 updateHistoryButtons();
 updateLayoutTools();
 applyTheme();
+applyDiagramBackground();
 /* ==========================================================
    ADD DEVICE
 ========================================================== */
@@ -2053,6 +2162,7 @@ const btnSnap=document.getElementById("btnSnap");
 const btnCancelLink=document.getElementById("btnCancelLink");
 const btnTheme=document.getElementById("btnTheme");
 const btnExportSVG=document.getElementById("btnExportSVG");
+const btnBackground=document.getElementById("btnBackground");
 
 const deviceModal=document.getElementById("deviceModal");
 
@@ -2060,6 +2170,9 @@ const btnCreateDevice=document.getElementById("btnCreateDevice");
 const btnCloseDevice=document.getElementById("btnCloseDevice");
 
 const deviceType=document.getElementById("deviceType");
+const deviceIconMode=document.getElementById("deviceIconMode");
+const deviceIconFile=document.getElementById("deviceIconFile");
+const deviceIconPreview=document.getElementById("deviceIconPreview");
 
 const deviceModel=document.getElementById("deviceModel");
 const devicePortCount=document.getElementById("devicePortCount");
@@ -2107,6 +2220,13 @@ const propLabelFollowsLine=document.getElementById("propLabelFollowsLine");
 const propLinkRouting=document.getElementById("propLinkRouting");
 const btnAddWaypoint=document.getElementById("btnAddWaypoint");
 const btnResetRoute=document.getElementById("btnResetRoute");
+const propIconFile=document.getElementById("propIconFile");
+const propPictureFile=document.getElementById("propPictureFile");
+const backgroundModal=document.getElementById("backgroundModal");
+const backgroundType=document.getElementById("backgroundType");
+const backgroundColor=document.getElementById("backgroundColor");
+const backgroundFit=document.getElementById("backgroundFit");
+const backgroundImageFile=document.getElementById("backgroundImageFile");
 
 function updateSelectedLinkAppearance(){
 
@@ -2221,7 +2341,7 @@ fileOpen.onchange=function(){
 
         }catch(e){
 
-            alert("File JSON tidak valid");
+            alert("File JSON tidak valid: "+e.message);
 
         }
 
@@ -2237,11 +2357,21 @@ btnAddDevice.onclick=function(){
     deviceType.selectedIndex = 0;
 
     updateDeviceOptions();
+    pendingDeviceIconData="";deviceIconMode.value="default";setPreview(deviceIconPreview,"","Default icon");
 
     deviceModal.style.display="flex";
     deviceType.focus();
 
 };
+deviceIconMode.addEventListener("change",function(){
+    if(this.value==="custom") deviceIconFile.click();
+    else{pendingDeviceIconData="";setPreview(deviceIconPreview,"","Default icon");}
+});
+deviceIconFile.addEventListener("change",async function(){
+    const file=this.files[0];this.value="";if(!file) return;
+    try{pendingDeviceIconData=await processImageFile(file,128,128,.9);deviceIconMode.value="custom";setPreview(deviceIconPreview,pendingDeviceIconData,"Default icon");}
+    catch(error){deviceIconMode.value=pendingDeviceIconData?"custom":"default";showFeedback(error.message,true);}
+});
 btnExportPNG.onclick=function(){
 
     exportPNG();
@@ -2298,6 +2428,44 @@ diagramNameInput.addEventListener("change",function(){
     diagramName=value; saveToLocalStorage();
 });
 
+document.getElementById("btnChangeIcon").onclick=()=>propIconFile.click();
+propIconFile.addEventListener("change",async function(){
+    const file=this.files[0],target=selectedNode;this.value="";if(!file||!target)return;
+    try{const data=await processImageFile(file,128,128,.9);if(!nodes.includes(target))return;recordHistory();target.iconType="custom";target.iconData=data;if(selectedNode===target)updateNodeMediaPreviews();render();saveToLocalStorage();}
+    catch(error){showFeedback(error.message,true);}
+});
+document.getElementById("btnResetIcon").onclick=function(){
+    if(!selectedNode||selectedNode.iconType!=="custom")return;recordHistory();selectedNode.iconType="default";selectedNode.iconData="";updateNodeMediaPreviews();render();saveToLocalStorage();
+};
+document.getElementById("btnChangePicture").onclick=()=>propPictureFile.click();
+propPictureFile.addEventListener("change",async function(){
+    const file=this.files[0],target=selectedNode;this.value="";if(!file||!target)return;
+    try{const data=await processImageFile(file,800,600,.8);if(!nodes.includes(target))return;recordHistory();target.pictureData=data;if(selectedNode===target)updateNodeMediaPreviews();saveToLocalStorage();}
+    catch(error){showFeedback(error.message,true);}
+});
+document.getElementById("btnRemovePicture").onclick=function(){
+    if(!selectedNode||!selectedNode.pictureData)return;recordHistory();selectedNode.pictureData="";updateNodeMediaPreviews();saveToLocalStorage();
+};
+
+btnBackground.onclick=function(){
+    backgroundType.value=diagramBackground.type;backgroundColor.value=diagramBackground.color;backgroundFit.value=diagramBackground.fit;
+    updateBackgroundPreview();backgroundModal.style.display="flex";backgroundType.focus();
+};
+document.getElementById("btnCloseBackground").onclick=function(){backgroundModal.style.display="none";btnBackground.focus();};
+backgroundType.addEventListener("change",function(){
+    if(this.value==="image"&&!diagramBackground.data){backgroundImageFile.click();return;}
+    recordHistory();diagramBackground.type=this.value;applyDiagramBackground();saveToLocalStorage();
+});
+backgroundColor.addEventListener("change",function(){recordHistory();diagramBackground={...diagramBackground,type:"color",color:this.value};backgroundType.value="color";applyDiagramBackground();saveToLocalStorage();});
+backgroundFit.addEventListener("change",function(){recordHistory();diagramBackground.fit=this.value;applyDiagramBackground();saveToLocalStorage();});
+document.getElementById("btnChooseBackgroundImage").onclick=()=>backgroundImageFile.click();
+backgroundImageFile.addEventListener("change",async function(){
+    const file=this.files[0];this.value="";if(!file)return;
+    try{const data=await processImageFile(file,1600,1200,.78);recordHistory();diagramBackground={...diagramBackground,type:"image",data};backgroundType.value="image";applyDiagramBackground();saveToLocalStorage();}
+    catch(error){backgroundType.value=diagramBackground.type;showFeedback(error.message,true);}
+});
+document.getElementById("btnResetBackground").onclick=function(){recordHistory();diagramBackground={type:"dark",color:"#202020",data:"",fit:"cover"};backgroundType.value="dark";backgroundColor.value="#202020";backgroundFit.value="cover";applyDiagramBackground();saveToLocalStorage();};
+
 btnCloseDevice.onclick=function(){
 
     deviceModal.style.display="none";
@@ -2326,6 +2494,9 @@ btnCreateDevice.onclick=function(){
         text:label,
         model:(type==="router"||type==="switch") ? deviceModel.value : "",
         portCount:(type==="router"||type==="switch") ? Number(devicePortCount.value) : (DEFAULT_PORTS[type]||0),
+        iconType:deviceIconMode.value==="custom"&&pendingDeviceIconData?"custom":"default",
+        iconData:deviceIconMode.value==="custom"?pendingDeviceIconData:"",
+        pictureData:"",
         x:getNextDevicePosition().x,
         y:getNextDevicePosition().y
 
@@ -2355,6 +2526,7 @@ document.addEventListener("keydown",function(e){
 
     if(e.key==="Escape"){
         if(deviceModal.style.display==="flex"){deviceModal.style.display="none";btnAddDevice.focus();}
+        if(backgroundModal.style.display==="flex"){backgroundModal.style.display="none";btnBackground.focus();}
         contextMenu.style.display="none";
         if(linkMode) cancelLinkMode();
         return;
