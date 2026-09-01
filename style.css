@@ -439,6 +439,11 @@ html,body{background:var(--page-bg);color:var(--text);}
 
 }
 
+.node .statusBadge{stroke:#ffffff;stroke-width:2;vector-effect:non-scaling-stroke;}
+.statusBadge.active{fill:#27ae60;}
+.statusBadge.inactive{fill:#7f8c8d;}
+.statusBadge.problem{fill:#e53935;}
+
 .link{
 
     stroke:#cfcfcf;
@@ -658,6 +663,8 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
     #diagramName{width:min(90vw,250px);}
     .modalContent{width:min(92vw,320px);max-height:90vh;overflow:auto;}
     .tools button{padding:0 12px;white-space:nowrap;}
+    #propertyPanel input,#propertyPanel select,#propertyPanel textarea{font-size:16px;min-height:42px;}
+    .mediaSection button,#routeControls button{min-height:42px;padding:9px 12px;}
 }
 
 .contextMenu div{
