@@ -137,6 +137,10 @@
 
             <input id="propName">
 
+            <label for="propDeviceType">Device Type</label>
+
+            <input id="propDeviceType" readonly>
+
             <label for="propIP">IP Address</label>
 
             <input id="propIP">
@@ -267,18 +271,13 @@
 
    <label for="deviceType">Device Type</label>
 
+   <label for="deviceSearch">Search Device</label>
+   <input id="deviceSearch" type="search" placeholder="Router, camera, server...">
+
+   <label for="deviceCategory">Device Category</label>
+   <select id="deviceCategory"></select>
+
    <select id="deviceType">
-
-    <option value="router">Router</option>
-    <option value="switch">Switch</option>
-    <option value="ap">Access Point</option>
-    <option value="pc">PC</option>
-    <option value="nas">NAS</option>
-    <option value="camera">Camera</option>
-    <option value="dvr">DVR</option>
-    <option value="pabx">PABX</option>
-    <option value="cloud">Cloud</option>
-
 </select>
     <label id="lblModel" for="deviceModel" style="display:none;">Model</label>
 
