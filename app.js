@@ -51,8 +51,83 @@ let diagramName = "HOTEL NETWORK DIAGRAM";
 let theme = "dark";
 let diagramBackground={type:"dark",color:"#202020",data:"",fit:"cover"};
 let pendingDeviceIconData="";
-const DEVICE_TYPES = new Set(["router","switch","ap","pc","nas","camera","dvr","pabx","cloud"]);
-const DEFAULT_PORTS = {router:5,switch:24,ap:1,pc:1,nas:2,camera:1,dvr:16,pabx:8,cloud:0};
+const DEVICE_LIBRARY={
+    router:{category:"Network",label:"Router",icon:"router",ports:5,models:["Generic Router","Branch Router"]},
+    core_router:{category:"Network",label:"Core Router",icon:"router",ports:8,models:["Core Router","High Capacity Router"]},
+    edge_router:{category:"Network",label:"Edge Router",icon:"router",ports:5,models:["Edge Router","WAN Router"]},
+    switch:{category:"Network",label:"Switch",icon:"switch",ports:24,models:["Generic Switch","Managed Switch","PoE Switch","Layer 3 Switch"]},
+    l3_switch:{category:"Network",label:"Layer 3 Switch",icon:"switch",ports:24,models:["24-Port L3","48-Port L3"]},
+    managed_switch:{category:"Network",label:"Managed Switch",icon:"switch",ports:24,models:["8-Port Managed","24-Port Managed","48-Port Managed"]},
+    unmanaged_switch:{category:"Network",label:"Unmanaged Switch",icon:"switch",ports:8,models:["5-Port Unmanaged","8-Port Unmanaged","16-Port Unmanaged"]},
+    poe_switch:{category:"Network",label:"PoE Switch",icon:"poe_switch",ports:24,models:["8-Port PoE","16-Port PoE","24-Port PoE","48-Port PoE"]},
+    l2_switch:{category:"Network",label:"Layer 2 Switch",icon:"switch",ports:24,models:["24-Port L2","48-Port L2"]},
+    firewall:{category:"Security",label:"Firewall",icon:"firewall",ports:6,models:["Network Firewall","Next-Gen Firewall"]},
+    ids:{category:"Security",label:"IDS",icon:"security",ports:2,models:["Intrusion Detection System"]},
+    ips:{category:"Security",label:"IPS",icon:"security",ports:2,models:["Intrusion Prevention System"]},
+    utm:{category:"Security",label:"UTM",icon:"firewall",ports:6,models:["Unified Threat Management"]},
+    vpn_gateway:{category:"Security",label:"VPN Gateway",icon:"gateway",ports:4,models:["VPN Gateway"]},
+    security_gateway:{category:"Security",label:"Security Gateway",icon:"firewall",ports:6,models:["Security Gateway"]},
+    ap:{category:"Wireless",label:"Access Point",icon:"wireless",ports:1,models:["Indoor AP","Ceiling AP","Guest Wi-Fi AP","Staff Wi-Fi AP"]},
+    outdoor_ap:{category:"Wireless",label:"Outdoor Access Point",icon:"outdoor_ap",ports:1,models:["Outdoor AP"]},
+    wireless_controller:{category:"Wireless",label:"Wireless Controller",icon:"controller",ports:4,models:["Wi-Fi Controller"]},
+    mesh_node:{category:"Wireless",label:"Wi-Fi Mesh Node",icon:"mesh",ports:1,models:["Mesh Node"]},
+    wireless_bridge:{category:"Wireless",label:"Wireless Bridge",icon:"wireless_bridge",ports:2,models:["Wireless Bridge"]},
+    repeater:{category:"Wireless",label:"Repeater",icon:"wireless",ports:1,models:["Wi-Fi Repeater"]},
+    gateway:{category:"Network",label:"Gateway",icon:"gateway",ports:4,models:["Network Gateway"]},
+    modem:{category:"WAN",label:"Modem",icon:"modem",ports:2,models:["Broadband Modem"]},
+    ont:{category:"WAN",label:"ONT / ONU",icon:"ont",ports:4,models:["Fiber ONT","ONU"]},
+    media_converter:{category:"Infrastructure",label:"Media Converter",icon:"converter",ports:2,models:["Fiber Media Converter"]},
+    network_bridge:{category:"Network",label:"Network Bridge",icon:"gateway",ports:2,models:["Network Bridge"]},
+    pc:{category:"Computing",label:"Desktop PC",icon:"desktop",ports:1,models:["Desktop PC","Workstation"]},
+    server:{category:"Server & Storage",label:"Server",icon:"server",ports:2,models:["Application Server","Database Server","File Server"]},
+    rack_server:{category:"Server & Storage",label:"Rack Server",icon:"rack_server",ports:4,models:["1U Rack Server","2U Rack Server"]},
+    tower_server:{category:"Server & Storage",label:"Tower Server",icon:"tower",ports:2,models:["Tower Server"]},
+    virtual_server:{category:"Server & Storage",label:"Virtual Server",icon:"virtual",ports:1,models:["Virtual Machine","Hypervisor"]},
+    laptop:{category:"Computing",label:"Laptop",icon:"laptop",ports:1,models:["Laptop"]},
+    thin_client:{category:"Computing",label:"Thin Client",icon:"terminal",ports:1,models:["Thin Client"]},
+    terminal:{category:"Computing",label:"Network Terminal",icon:"terminal",ports:1,models:["Network Terminal"]},
+    nas:{category:"Server & Storage",label:"NAS",icon:"storage",ports:2,models:["2-Bay NAS","4-Bay NAS","Rack NAS"]},
+    san:{category:"Server & Storage",label:"SAN",icon:"storage",ports:4,models:["Storage Area Network"]},
+    storage_server:{category:"Server & Storage",label:"Storage Server",icon:"storage",ports:4,models:["Storage Server"]},
+    backup_server:{category:"Server & Storage",label:"Backup Server",icon:"server",ports:2,models:["Backup Server"]},
+    disk_storage:{category:"Server & Storage",label:"Disk Storage",icon:"storage",ports:2,models:["Disk Array"]},
+    camera:{category:"CCTV & Access",label:"IP Camera",icon:"camera",ports:1,models:["IP Camera","Bullet Camera"]},
+    dome_camera:{category:"CCTV & Access",label:"Dome Camera",icon:"dome_camera",ports:1,models:["Indoor Dome","Outdoor Dome"]},
+    ptz_camera:{category:"CCTV & Access",label:"PTZ Camera",icon:"ptz_camera",ports:1,models:["PTZ Camera"]},
+    dvr:{category:"CCTV & Access",label:"DVR",icon:"recorder",ports:16,models:["8-Channel DVR","16-Channel DVR","32-Channel DVR"]},
+    nvr:{category:"CCTV & Access",label:"NVR",icon:"recorder",ports:16,models:["8-Channel NVR","16-Channel NVR","32-Channel NVR"]},
+    cctv_monitor:{category:"CCTV & Access",label:"CCTV Monitor",icon:"monitor",ports:2,models:["CCTV Monitor"]},
+    access_control:{category:"CCTV & Access",label:"Access Control",icon:"access",ports:4,models:["Access Control Panel"]},
+    door_controller:{category:"CCTV & Access",label:"Door Controller",icon:"door",ports:4,models:["Door Lock Controller"]},
+    card_reader:{category:"CCTV & Access",label:"RFID / Card Reader",icon:"card",ports:1,models:["RFID Reader","Card Reader"]},
+    pabx:{category:"Telephony",label:"PABX / IP-PBX",icon:"pbx",ports:8,models:["PABX","IP-PBX"]},
+    ip_phone:{category:"Telephony",label:"IP Phone",icon:"phone",ports:2,models:["IP Phone","VoIP Phone"]},
+    analog_phone:{category:"Telephony",label:"Analog Phone",icon:"phone",ports:1,models:["Analog Phone"]},
+    voip_gateway:{category:"Telephony",label:"VoIP Gateway",icon:"gateway",ports:4,models:["VoIP Gateway","SIP Gateway"]},
+    iptv_server:{category:"Hotel",label:"IPTV Server",icon:"server",ports:2,models:["IPTV Server"]},
+    iptv_headend:{category:"Hotel",label:"IPTV Headend",icon:"rack_server",ports:8,models:["IPTV Headend"]},
+    stb:{category:"Hotel",label:"IPTV Box / STB",icon:"stb",ports:2,models:["Set-Top Box"]},
+    hotel_tv:{category:"Hotel",label:"Hotel TV",icon:"tv",ports:2,models:["Smart Hotel TV"]},
+    pos_terminal:{category:"Hotel",label:"POS Terminal",icon:"pos",ports:1,models:["POS Terminal"]},
+    pos_server:{category:"Hotel",label:"POS Server",icon:"server",ports:2,models:["POS Server"]},
+    kiosk:{category:"Hotel",label:"Kiosk",icon:"kiosk",ports:1,models:["Self-Service Kiosk"]},
+    digital_signage:{category:"Hotel",label:"Digital Signage",icon:"tv",ports:1,models:["Digital Signage Player"]},
+    printer:{category:"Peripheral",label:"Network Printer",icon:"printer",ports:1,models:["Network Printer","Laser Printer"]},
+    scanner:{category:"Peripheral",label:"Scanner",icon:"scanner",ports:1,models:["Network Scanner"]},
+    copier:{category:"Peripheral",label:"Copier / MFP",icon:"printer",ports:1,models:["Multifunction Printer"]},
+    barcode_scanner:{category:"Peripheral",label:"Barcode Scanner",icon:"scanner",ports:1,models:["Barcode Scanner"]},
+    cloud:{category:"WAN",label:"Cloud / Internet",icon:"cloud",ports:0,models:["Internet","ISP","Cloud","VPN Cloud"]},
+    wan:{category:"WAN",label:"WAN",icon:"cloud",ports:0,models:["Wide Area Network"]},
+    data_center:{category:"WAN",label:"Data Center",icon:"datacenter",ports:8,models:["Data Center"]},
+    branch_office:{category:"WAN",label:"Branch Office",icon:"building",ports:4,models:["Branch Office"]},
+    patch_panel:{category:"Infrastructure",label:"Patch Panel",icon:"patch",ports:24,models:["24-Port Patch Panel","48-Port Patch Panel"]},
+    rack:{category:"Infrastructure",label:"Server Rack",icon:"rack",ports:0,models:["Network Rack","Server Rack"]},
+    fiber_odf:{category:"Infrastructure",label:"Fiber ODF",icon:"fiber",ports:24,models:["Fiber ODF","Fiber Distribution Box"]},
+    cabinet:{category:"Infrastructure",label:"Network Cabinet",icon:"rack",ports:0,models:["Network Cabinet"]},
+    ups:{category:"Infrastructure",label:"UPS",icon:"ups",ports:2,models:["Rack UPS","Tower UPS"]}
+};
+const DEVICE_TYPES=new Set(Object.keys(DEVICE_LIBRARY));
+const DEFAULT_PORTS=Object.fromEntries(Object.entries(DEVICE_LIBRARY).map(([id,item])=>[id,item.ports]));
 
 function uniqueId(prefix){
     return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
@@ -827,6 +902,7 @@ if(node.type==="pabx"){
 }
     //------------------------------------
 
+    if(node.iconType!=="custom") drawProfessionalIcon(icon,getNodeIconKey(node));
     g.appendChild(icon);
 
     //------------------------------------
@@ -1060,6 +1136,65 @@ function drawSwitch(icon){
 
     }
 
+}
+
+const PROFESSIONAL_ICONS={
+ router:'<rect x="27" y="20" width="36" height="22" rx="5"/><path d="M34 27h22m-22 8h22M37 24l-4 3 4 3m16 2 4 3-4 3"/>',
+ switch:'<rect x="24" y="22" width="42" height="20" rx="3"/><path d="M29 28h5v5h-5zm8 0h5v5h-5zm8 0h5v5h-5zm8 0h5v5h-5z"/><circle cx="61" cy="31" r="1" fill="#fff"/>',
+ poe_switch:'<rect x="24" y="22" width="42" height="20" rx="3"/><path d="M29 28h5v5h-5zm8 0h5v5h-5zm8 0h5v5h-5zM56 25l-5 8h5l-2 6 7-9h-5z"/>',
+ firewall:'<path d="M27 18h36v25H27zM27 25h12v9H27m12-16v7h12v9h12M39 34v9m12-25v7m0 9v9"/>',
+ security:'<path d="M45 15l15 6v10c0 10-7 15-15 19-8-4-15-9-15-19V21z"/><path d="M38 32l5 5 10-11"/>',
+ wireless:'<rect x="31" y="31" width="28" height="12" rx="4"/><circle cx="45" cy="37" r="2" fill="#fff"/><path d="M35 27a14 14 0 0 1 20 0M39 23a9 9 0 0 1 12 0M45 18v4"/>',
+ outdoor_ap:'<rect x="39" y="22" width="12" height="24" rx="3"/><path d="M39 29c-7 2-10 7-11 13m23-13c7 2 10 7 11 13M45 15v7"/>',
+ controller:'<rect x="25" y="20" width="40" height="24" rx="4"/><path d="M31 27h13v10H31zm18 0h10m-10 5h10m-10 5h6"/>',
+ mesh:'<circle cx="45" cy="31" r="8"/><circle cx="45" cy="31" r="2" fill="#fff"/><path d="M30 22a18 18 0 0 1 30 0M26 17a25 25 0 0 1 38 0M34 42l-5 5m27-5 5 5"/>',
+ wireless_bridge:'<path d="M27 38h12V25H27zm24 0h12V25H51zM39 31h12M31 21a16 16 0 0 1 28 0"/>',
+ gateway:'<rect x="27" y="20" width="36" height="24" rx="4"/><path d="M33 27h24M33 34h11m5 0h8M40 17l5-4 5 4"/>',
+ modem:'<rect x="28" y="23" width="34" height="20" rx="5"/><path d="M34 30h14m-14 6h22M55 18v5"/><circle cx="55" cy="30" r="1" fill="#fff"/>',
+ ont:'<rect x="29" y="20" width="32" height="24" rx="4"/><path d="M35 27h20v8H35zm4 12h3m5 0h3m5 0h2"/>',
+ converter:'<rect x="27" y="23" width="36" height="20" rx="3"/><path d="M32 29h10v8H32zm17 0h9v8h-9M42 33h7"/>',
+ desktop:'<rect x="26" y="18" width="38" height="25" rx="3"/><path d="M40 43v5m-8 0h26M31 23h28v15H31z"/>',
+ laptop:'<path d="M30 18h30v22H30zM25 45h40l-4 4H29z"/><path d="M34 22h22v14H34z"/>',
+ terminal:'<rect x="27" y="18" width="36" height="24" rx="3"/><path d="M34 26l5 4-5 4m9 0h9M39 42v6m-8 0h28"/>',
+ server:'<rect x="31" y="14" width="28" height="36" rx="3"/><path d="M35 20h20v8H35zm0 12h20v8H35z"/><circle cx="51" cy="24" r="1" fill="#fff"/><circle cx="51" cy="36" r="1" fill="#fff"/>',
+ rack_server:'<rect x="24" y="18" width="42" height="26" rx="2"/><path d="M28 23h34v7H28zm0 9h34v7H28z"/><circle cx="58" cy="26" r="1" fill="#fff"/><circle cx="58" cy="35" r="1" fill="#fff"/>',
+ tower:'<rect x="34" y="13" width="22" height="38" rx="3"/><path d="M39 20h12m-12 6h12"/><circle cx="45" cy="42" r="3"/>',
+ virtual:'<rect x="26" y="17" width="30" height="24" rx="3"/><rect x="34" y="23" width="30" height="24" rx="3"/><path d="M40 30h18v10H40z"/>',
+ storage:'<rect x="28" y="15" width="34" height="34" rx="4"/><path d="M33 21h24v10H33zm0 13h24v10H33z"/><circle cx="53" cy="26" r="1" fill="#fff"/><circle cx="53" cy="39" r="1" fill="#fff"/>',
+ camera:'<path d="M26 27h30v14H26zM56 30l10-6v20l-10-6zM32 24l5-5h13l4 5"/><circle cx="42" cy="34" r="5"/>',
+ dome_camera:'<path d="M27 38a18 18 0 0 1 36 0zM31 38v5h28v-5"/><circle cx="45" cy="33" r="5"/>',
+ ptz_camera:'<path d="M31 20h28l-3 12H34zM36 32a9 9 0 0 0 18 0M45 41v6m-9 0h18"/><circle cx="45" cy="32" r="3"/>',
+ recorder:'<rect x="24" y="22" width="42" height="22" rx="3"/><path d="M29 28h22v10H29zm27 1h5m-5 5h5"/><circle cx="59" cy="39" r="1" fill="#fff"/>',
+ monitor:'<rect x="25" y="17" width="40" height="27" rx="3"/><path d="M39 44v5m-9 0h30M30 22h30v17H30z"/>',
+ access:'<rect x="29" y="17" width="32" height="32" rx="4"/><path d="M36 24h18v18H36zM40 28h10m-10 5h10m-10 5h6"/>',
+ door:'<path d="M31 14h28v36H31zM37 20h16v30H37z"/><circle cx="49" cy="35" r="1.5" fill="#fff"/>',
+ card:'<rect x="27" y="18" width="36" height="28" rx="4"/><path d="M33 25h15m-15 6h24m-24 6h18"/><circle cx="55" cy="25" r="3"/>',
+ pbx:'<rect x="26" y="16" width="38" height="32" rx="3"/><path d="M31 22h28v8H31zm0 12h6v6h-6zm10 0h6v6h-6zm10 0h8v6h-8"/>',
+ phone:'<path d="M31 20c4-4 24-4 28 0l-4 7-7-3h-6l-7 3zM34 31h22v16H34z"/><path d="M40 36h10m-10 5h10"/>',
+ stb:'<rect x="27" y="24" width="36" height="18" rx="4"/><path d="M33 30h15m-15 6h24"/><circle cx="57" cy="30" r="1" fill="#fff"/>',
+ tv:'<rect x="24" y="16" width="42" height="28" rx="3"/><path d="M42 44v5m-10 0h26M37 12l8 4 8-4"/>',
+ pos:'<path d="M31 15h28v24H31zM35 20h20v13H35zM28 39h34l4 10H24z"/>',
+ kiosk:'<path d="M34 13h22v29H34zM38 18h14v15H38zM39 42l-3 8h18l-3-8"/>',
+ printer:'<path d="M31 15h28v12H31zM25 27h40v16H25zM31 38h28v12H31z"/><circle cx="58" cy="32" r="1" fill="#fff"/>',
+ scanner:'<path d="M28 35h34v11H28zM34 18h22l6 17H28zM37 23h16"/>',
+ cloud:'<path d="M25 39c-7-1-7-12 1-14 1-9 13-12 19-5 8-6 18 0 18 8 8 2 7 12-1 12z"/>',
+ datacenter:'<path d="M27 16h36v34H27zM32 21h10v8H32zm16 0h10v8H48zM32 34h10v11H32zm16 0h10v11H48z"/>',
+ building:'<path d="M28 20l17-8 17 8v30H28zM34 25h7v7h-7zm15 0h7v7h-7zM34 37h7v7h-7zm15 0h7v13h-7"/>',
+ patch:'<rect x="23" y="22" width="44" height="22" rx="2"/><path d="M28 27h5v5h-5zm8 0h5v5h-5zm8 0h5v5h-5zm8 0h5v5h-5zm8 0h3v5h-3zM28 35h5v5h-5zm8 0h5v5h-5zm8 0h5v5h-5zm8 0h5v5h-5z"/>',
+ rack:'<path d="M30 12h30v40H30zM34 17h22v8H34zm0 11h22v8H34zm0 11h22v8H34z"/>',
+ fiber:'<rect x="25" y="20" width="40" height="25" rx="3"/><path d="M31 26h6v6h-6zm11 0h6v6h-6zm11 0h6v6h-6M34 35c8 8 14 8 22 0"/>',
+ ups:'<rect x="32" y="13" width="26" height="38" rx="3"/><path d="M38 20h14v12H38zM45 35l-5 8h5l-2 6 7-9h-5z"/>'
+};
+
+function getDeviceDefinition(type){return DEVICE_LIBRARY[type]||DEVICE_LIBRARY.pc;}
+function drawProfessionalIcon(icon,key){icon.innerHTML=PROFESSIONAL_ICONS[key]||PROFESSIONAL_ICONS.terminal;}
+function getNodeIconKey(node){
+    const model=String(node.model||"").toLowerCase();
+    if(model.includes("poe"))return"poe_switch";
+    if(model.includes("dome"))return"dome_camera";
+    if(model.includes("ptz"))return"ptz_camera";
+    if(model.includes("rack server"))return"rack_server";
+    return getDeviceDefinition(node.type).icon;
 }
 
 function getOrthogonalPoints(link,from,to){
@@ -1348,6 +1483,8 @@ if(linkMode){
     document.getElementById("propName").value=
         selectedNode.text;
 
+    document.getElementById("propDeviceType").value=getDeviceDefinition(selectedNode.type).label;
+
     document.getElementById("propIP").value=
         selectedNode.ip || "";
 
@@ -1377,11 +1514,15 @@ function setPreview(element,data,emptyText){
 
 function updateNodeMediaPreviews(){
     if(!selectedNode) return;
-    setPreview(document.getElementById("propIconPreview"),selectedNode.iconType==="custom"?selectedNode.iconData:"","Default icon");
+    const iconPreview=document.getElementById("propIconPreview");
+    if(selectedNode.iconType==="custom")setPreview(iconPreview,selectedNode.iconData,"Default icon");else setDefaultIconPreview(iconPreview,selectedNode);
     setPreview(document.getElementById("propPicturePreview"),selectedNode.pictureData,"No picture");
     document.getElementById("btnResetIcon").disabled=selectedNode.iconType!=="custom";
     document.getElementById("btnChangePicture").textContent=selectedNode.pictureData?"Change Picture":"Add Picture";
     document.getElementById("btnRemovePicture").disabled=!selectedNode.pictureData;
+}
+function setDefaultIconPreview(element,node){
+    element.innerHTML="";const preview=document.createElementNS(SVGNS,"svg");preview.setAttribute("viewBox","0 0 90 60");preview.setAttribute("width","76");preview.setAttribute("height","56");preview.setAttribute("fill","none");preview.setAttribute("stroke","#00aee6");preview.setAttribute("stroke-width","2");preview.setAttribute("stroke-linecap","round");preview.setAttribute("stroke-linejoin","round");preview.innerHTML=PROFESSIONAL_ICONS[getNodeIconKey(node)]||PROFESSIONAL_ICONS.terminal;element.appendChild(preview);
 }
 
 /* ==========================================================
@@ -2087,43 +2228,16 @@ function exportPNG(){
    INITIALIZE
 ========================================================== */
 function updateDeviceOptions(){
-
-    const type = deviceType.value;
-
-    // sembunyikan dulu semuanya
-    lblModel.style.display = "none";
-    deviceModel.style.display = "none";
-
-    lblPortCount.style.display = "none";
-    devicePortCount.style.display = "none";
-
-    deviceModel.innerHTML = "";
-
-    // kalau bukan router / switch selesai
-    if(type !== "router" && type !== "switch"){
-        return;
-    }
-
-    // tampilkan lagi
-    lblModel.style.display = "";
-    deviceModel.style.display = "";
-
-    lblPortCount.style.display = "";
-    devicePortCount.style.display = "";
-
-    DEVICE_MODELS[type].forEach(model=>{
-
-        const option=document.createElement("option");
-
-        option.textContent=model.name;
-        option.value=model.name;
-        option.dataset.ports=model.ports;
-
-        deviceModel.appendChild(option);
-
+    const definition=getDeviceDefinition(deviceType.value);
+    lblModel.style.display="";deviceModel.style.display="";
+    lblPortCount.style.display=definition.ports>0?"":"none";devicePortCount.style.display=definition.ports>0?"":"none";
+    deviceModel.innerHTML="";
+    definition.models.forEach(name=>{
+        const option=document.createElement("option");option.textContent=name;option.value=name;
+        const match=name.match(/(\d+)[- ]Port/i);option.dataset.ports=match?match[1]:definition.ports;deviceModel.appendChild(option);
     });
-
     syncModelPortOptions();
+    if(typeof deviceIconMode!=="undefined"&&deviceIconMode.value==="default")setDefaultIconPreview(deviceIconPreview,{type:deviceType.value,model:deviceModel.value});
 
 }
 function syncModelPortOptions(){
@@ -2134,6 +2248,22 @@ function syncModelPortOptions(){
     const portOption=document.createElement("option");
     portOption.value=ports; portOption.textContent=ports;
     devicePortCount.appendChild(portOption);
+    if(typeof deviceIconMode!=="undefined"&&deviceIconMode.value==="default")setDefaultIconPreview(deviceIconPreview,{type:deviceType.value,model:deviceModel.value});
+}
+function populateDeviceLibrary(){
+    const search=document.getElementById("deviceSearch").value.trim().toLowerCase();
+    const category=document.getElementById("deviceCategory").value;
+    const previous=deviceType.value;deviceType.innerHTML="";
+    const groups=new Map();
+    Object.entries(DEVICE_LIBRARY).forEach(([id,item])=>{
+        const haystack=`${item.label} ${item.category} ${item.models.join(" ")}`.toLowerCase();
+        if((category&&category!=="all"&&item.category!==category)||(search&&!haystack.includes(search)))return;
+        if(!groups.has(item.category)){const group=document.createElement("optgroup");group.label=item.category;groups.set(item.category,group);deviceType.appendChild(group);}
+        const option=document.createElement("option");option.value=id;option.textContent=item.label;groups.get(item.category).appendChild(option);
+    });
+    if([...deviceType.options].some(option=>option.value===previous))deviceType.value=previous;
+    btnCreateDevice.disabled=deviceType.options.length===0;
+    if(deviceType.options.length)updateDeviceOptions();
 }
 loadFromLocalStorage();
 render();
@@ -2170,6 +2300,8 @@ const btnCreateDevice=document.getElementById("btnCreateDevice");
 const btnCloseDevice=document.getElementById("btnCloseDevice");
 
 const deviceType=document.getElementById("deviceType");
+const deviceCategory=document.getElementById("deviceCategory");
+const deviceSearch=document.getElementById("deviceSearch");
 const deviceIconMode=document.getElementById("deviceIconMode");
 const deviceIconFile=document.getElementById("deviceIconFile");
 const deviceIconPreview=document.getElementById("deviceIconPreview");
@@ -2179,30 +2311,13 @@ const devicePortCount=document.getElementById("devicePortCount");
 
 const lblModel=document.getElementById("lblModel");
 const lblPortCount=document.getElementById("lblPortCount");
-const DEVICE_MODELS = {
-
-    router: [
-        { name: "MikroTik RB1100AHx2", ports: 13 },
-        { name: "MikroTik RB4011", ports: 10 },
-        { name: "MikroTik hEX", ports: 5 },
-        { name: "Cisco ISR", ports: 4 },
-        { name: "Generic Router", ports: 1 }
-    ],
-
-    switch: [
-        { name: "Generic Switch", ports: 24 },
-        { name: "Cisco Catalyst", ports: 24 },
-        { name: "Cisco SG350", ports: 48 },
-        { name: "MikroTik CRS", ports: 24 },
-        { name: "TP-Link", ports: 24 },
-        { name: "D-Link", ports: 24 }
-    ]
-
-};
 deviceType.addEventListener("change", updateDeviceOptions);
 deviceModel.addEventListener("change",syncModelPortOptions);
-
-updateDeviceOptions();
+deviceCategory.innerHTML='<option value="all">All Categories</option>';
+[...new Set(Object.values(DEVICE_LIBRARY).map(item=>item.category))].sort().forEach(category=>{const option=document.createElement("option");option.value=category;option.textContent=category;deviceCategory.appendChild(option);});
+deviceCategory.addEventListener("change",populateDeviceLibrary);
+deviceSearch.addEventListener("input",populateDeviceLibrary);
+populateDeviceLibrary();
 const contextMenu=document.getElementById("contextMenu");
 
 const cmRename=document.getElementById("cmRename");
@@ -2353,11 +2468,8 @@ fileOpen.onchange=function(){
 
 };
 btnAddDevice.onclick=function(){
-
-    deviceType.selectedIndex = 0;
-
-    updateDeviceOptions();
-    pendingDeviceIconData="";deviceIconMode.value="default";setPreview(deviceIconPreview,"","Default icon");
+    deviceCategory.value="all";deviceSearch.value="";populateDeviceLibrary();deviceType.selectedIndex=0;updateDeviceOptions();
+    pendingDeviceIconData="";deviceIconMode.value="default";setDefaultIconPreview(deviceIconPreview,{type:deviceType.value,model:deviceModel.value});
 
     deviceModal.style.display="flex";
     deviceType.focus();
@@ -2365,7 +2477,7 @@ btnAddDevice.onclick=function(){
 };
 deviceIconMode.addEventListener("change",function(){
     if(this.value==="custom") deviceIconFile.click();
-    else{pendingDeviceIconData="";setPreview(deviceIconPreview,"","Default icon");}
+    else{pendingDeviceIconData="";setDefaultIconPreview(deviceIconPreview,{type:deviceType.value,model:deviceModel.value});}
 });
 deviceIconFile.addEventListener("change",async function(){
     const file=this.files[0];this.value="";if(!file) return;
@@ -2481,7 +2593,7 @@ btnCreateDevice.onclick=function(){
 
     const id=type+"_"+Date.now();
 
-    const label=type.toUpperCase()+"-"+String(count).padStart(3,"0");
+    const label=getDeviceDefinition(type).label.toUpperCase()+"-"+String(count).padStart(3,"0");
 
     recordHistory();
 
@@ -2492,8 +2604,8 @@ btnCreateDevice.onclick=function(){
         type:type,
 
         text:label,
-        model:(type==="router"||type==="switch") ? deviceModel.value : "",
-        portCount:(type==="router"||type==="switch") ? Number(devicePortCount.value) : (DEFAULT_PORTS[type]||0),
+        model:deviceModel.value,
+        portCount:getDeviceDefinition(type).ports>0 ? Number(devicePortCount.value) : 0,
         iconType:deviceIconMode.value==="custom"&&pendingDeviceIconData?"custom":"default",
         iconData:deviceIconMode.value==="custom"?pendingDeviceIconData:"",
         pictureData:"",
