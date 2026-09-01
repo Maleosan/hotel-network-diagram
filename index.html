@@ -139,7 +139,7 @@
 
             <label for="propDeviceType">Device Type</label>
 
-            <input id="propDeviceType" readonly>
+            <select id="propDeviceType"></select>
 
             <label for="propIP">IP Address</label>
 
@@ -147,11 +147,22 @@
 
             <label for="propModel">Model</label>
 
-            <input id="propModel">
+            <select id="propModel"></select>
 
             <label for="propPortCount">Port Count</label>
 
-            <input id="propPortCount" type="number" min="0" max="512" step="1">
+            <select id="propPortCount"></select>
+
+            <div id="statusProperties">
+                <label for="propStatus">Status</label>
+                <select id="propStatus">
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                    <option value="problem">Problem</option>
+                </select>
+                <label for="propStatusNote">Status Note</label>
+                <input id="propStatusNote" maxlength="160" placeholder="Optional status information">
+            </div>
 
             <label for="propLocation">Location</label>
 
