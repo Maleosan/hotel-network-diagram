@@ -716,7 +716,7 @@ function drawAnnotation(annotation){
     if(annotation.type==="image"){
         const clipId=`annotationClip_${annotation.id.replace(/[^a-z0-9_-]/gi,"_")}`;
         const defs=document.createElementNS(SVGNS,"defs"),clip=document.createElementNS(SVGNS,"clipPath"),clipRect=document.createElementNS(SVGNS,"rect");clip.id=clipId;clipRect.setAttribute("width",annotation.width);clipRect.setAttribute("height",annotation.height);clip.appendChild(clipRect);defs.appendChild(clip);group.appendChild(defs);
-        const imageGroup=document.createElementNS(SVGNS,"g"),zoom=Math.min(4,Math.max(1,Number(annotation.cropZoom)||1)),shiftX=((Number(annotation.cropX)||50)-50)*annotation.width/100,shiftY=((Number(annotation.cropY)||50)-50)*annotation.height/100;
+        const imageGroup=document.createElementNS(SVGNS,"g"),zoom=Math.min(4,Math.max(1,Number(annotation.cropZoom)||1)),cropX=Number.isFinite(Number(annotation.cropX))?Number(annotation.cropX):50,cropY=Number.isFinite(Number(annotation.cropY))?Number(annotation.cropY):50,shiftX=(cropX-50)*annotation.width/100,shiftY=(cropY-50)*annotation.height/100;
         imageGroup.setAttribute("clip-path",`url(#${clipId})`);imageGroup.setAttribute("transform",`translate(${annotation.width/2-shiftX} ${annotation.height/2-shiftY}) scale(${zoom}) translate(${-annotation.width/2} ${-annotation.height/2})`);
         const image=document.createElementNS(SVGNS,"image");
         image.setAttribute("href",annotation.data);image.setAttribute("width",annotation.width);image.setAttribute("height",annotation.height);image.setAttribute("preserveAspectRatio","xMidYMid slice");imageGroup.appendChild(image);
