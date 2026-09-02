@@ -641,6 +641,17 @@ body.lightTheme #routeControls small{color:#52606d;}
 .checkLabel{display:flex!important;align-items:center;gap:8px;}
 .checkLabel input{width:auto!important;}
 
+.connectionStatus{margin:18px 0;padding-top:12px;border-top:1px solid var(--border);}
+.connectionStatus h3{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.05em;}
+#connectionStatusList{display:grid;gap:5px;max-height:300px;overflow:auto;padding-right:3px;}
+.connectionStatusRow{display:grid;grid-template-columns:minmax(62px,auto) 1fr;gap:10px;align-items:center;min-height:34px;padding:7px 9px;border:1px solid var(--border);border-radius:5px;background:var(--field-bg);color:var(--text);text-align:left;font:inherit;}
+button.connectionStatusRow{width:100%;cursor:pointer;}
+.connectionStatusRow strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;}
+.connectionStatusRow.connected span{color:#21c97a;}
+.connectionStatusRow.available{opacity:.68;}
+.connectionDetail{display:grid;grid-template-columns:auto 1fr;gap:5px 10px;margin:14px 0;padding:10px;border:1px solid var(--border);border-radius:5px;font-size:12px;}
+.connectionDetail dt{color:var(--muted,#aaa);}.connectionDetail dd{margin:0;overflow-wrap:anywhere;}
+
 body.lightTheme .node text{fill:#17202a;}
 body.lightTheme .tools button{color:#fff;}
 body.lightTheme .linkLabel{fill:#17202a;}
