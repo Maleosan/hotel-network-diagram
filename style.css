@@ -505,6 +505,9 @@ html,body{background:var(--page-bg);color:var(--text);}
 .annotationText{fill:var(--text);font-size:18px;font-weight:600;paint-order:stroke;stroke:var(--canvas-bg);stroke-width:4px;stroke-linejoin:round;}
 .annotationImageFrame{fill:none;stroke:transparent;stroke-width:2;stroke-dasharray:6 4;}
 .annotation.selectedAnnotation .annotationImageFrame{stroke:#ff9800;}
+#annotationProperties h3{margin-bottom:15px;color:#00d4ff;}
+#annotationProperties button{margin-top:12px;margin-right:6px;padding:9px 12px;border:0;border-radius:5px;background:#0077c8;color:#fff;cursor:pointer;}
+#annotationProperties #btnDeleteAnnotation{background:#d9272e;}
 
 #routeControls{
     margin-top:10px;
