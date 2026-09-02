@@ -34,6 +34,12 @@
 
 <button id="btnAddDevice">+ Add Device</button>
 
+        <button id="btnAddText">+ Text</button>
+
+        <button id="btnAddImage">+ Image</button>
+
+        <input id="annotationImageFile" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" hidden>
+
         <button id="btnAddLink">+ Add Link</button>
 
         <button id="btnCancelLink" hidden>Cancel Link</button>
@@ -128,6 +134,8 @@
 </g>
 
 <g id="viewport">
+
+    <g id="annotations"></g>
 
     <g id="links"></g>
 
