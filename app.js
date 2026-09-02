@@ -2413,6 +2413,105 @@ function populateDeviceLibrary(){
     btnCreateDevice.disabled=deviceType.options.length===0;
     if(deviceType.options.length)updateDeviceOptions();
 }
+
+function createDevice(type,options={},position=getNextDevicePosition()){
+    const definition=getDeviceDefinition(type);
+    const model=options.model&&definition.models.includes(options.model)?options.model:definition.models[0];
+    const count=nodes.filter(node=>node.type===type).length+1;
+    const capacity=definition.ports>0?(Number(options.portCount)||getModelConnectionCount(definition,model)):0;
+    return{
+        id:uniqueId(type),type,
+        text:options.text||`${definition.label.toUpperCase()}-${String(count).padStart(3,"0")}`,
+        ip:"",model,portCount:capacity,location:"",notes:"",
+        iconType:options.iconType==="custom"&&options.iconData?"custom":"default",
+        iconData:options.iconType==="custom"?options.iconData||"":"",
+        pictureData:"",status:"active",statusNote:"",
+        x:position.x,y:position.y
+    };
+}
+
+function addDevice(type,options={},position,selectAfterCreate=false){
+    if(!DEVICE_TYPES.has(type)) return null;
+    recordHistory();
+    const node=createDevice(type,options,position||getNextDevicePosition());
+    nodes.push(node);render();saveToLocalStorage();
+    if(selectAfterCreate) selectNodeById(node.id);
+    return node;
+}
+
+function renderDevicePalette(search=""){
+    const container=document.getElementById("paletteCategories");
+    const query=search.trim().toLowerCase();
+    container.innerHTML="";
+    const categories=new Map();
+    Object.entries(DEVICE_LIBRARY).forEach(([type,definition])=>{
+        if(query&&!`${definition.label} ${definition.category} ${definition.models.join(" ")}`.toLowerCase().includes(query)) return;
+        if(!categories.has(definition.category)) categories.set(definition.category,[]);
+        categories.get(definition.category).push([type,definition]);
+    });
+    [...categories.entries()].sort(([a],[b])=>a.localeCompare(b)).forEach(([category,items],categoryIndex)=>{
+        const details=document.createElement("details");details.className="paletteCategory";details.open=Boolean(query)||categoryIndex===0;
+        const summary=document.createElement("summary");summary.textContent=`${category} (${items.length})`;
+        const list=document.createElement("div");list.className="paletteDeviceList";
+        items.forEach(([type,definition])=>{
+            const item=document.createElement("div");item.className="paletteDevice";item.draggable=true;item.tabIndex=0;item.dataset.deviceType=type;item.title=`Drag ${definition.label} to the diagram`;
+            const icon=document.createElement("span");icon.className="paletteDeviceIcon";icon.textContent=definition.label.split(/\s+/).map(word=>word[0]).join("").slice(0,3);
+            const label=document.createElement("span");label.textContent=definition.label;item.append(icon,label);
+            bindPaletteDevice(item);list.appendChild(item);
+        });
+        details.append(summary,list);container.appendChild(details);
+    });
+    if(categories.size===0){const empty=document.createElement("p");empty.className="paletteEmpty";empty.textContent="No devices found";container.appendChild(empty);}
+}
+
+let draggedPaletteType=null;
+let touchPaletteDrag=null;
+function showPaletteDropFeedback(type,clientX,clientY){
+    const canvas=document.getElementById("canvasContainer"),preview=document.getElementById("paletteDropPreview"),rect=canvas.getBoundingClientRect();
+    canvas.classList.add("paletteDropTarget");preview.style.left=`${clientX-rect.left}px`;preview.style.top=`${clientY-rect.top}px`;preview.textContent=getDeviceDefinition(type).label;
+}
+function clearPaletteDropFeedback(){
+    document.getElementById("canvasContainer").classList.remove("paletteDropTarget");
+    document.querySelectorAll(".paletteDevice.dragging").forEach(item=>item.classList.remove("dragging"));
+}
+function addPaletteDeviceAt(type,clientX,clientY){
+    const point=getViewportPoint({clientX,clientY});
+    const position=getSnappedPosition(point.x-NODE_WIDTH/2,point.y-NODE_HEIGHT/2);
+    const node=addDevice(type,{},position,true);
+    if(node) showFeedback(`${getDeviceDefinition(type).label} added`,false);
+}
+function bindPaletteDevice(item){
+    item.addEventListener("dragstart",event=>{
+        draggedPaletteType=item.dataset.deviceType;item.classList.add("dragging");event.dataTransfer.effectAllowed="copy";event.dataTransfer.setData("text/x-device-type",draggedPaletteType);
+    });
+    item.addEventListener("dragend",()=>{draggedPaletteType=null;clearPaletteDropFeedback();});
+    item.addEventListener("pointerdown",event=>{
+        if(event.pointerType!=="touch") return;
+        touchPaletteDrag={pointerId:event.pointerId,type:item.dataset.deviceType,startX:event.clientX,startY:event.clientY,active:false,item};item.setPointerCapture?.(event.pointerId);
+    });
+    item.addEventListener("pointermove",event=>{
+        if(!touchPaletteDrag||touchPaletteDrag.pointerId!==event.pointerId) return;
+        if(!touchPaletteDrag.active&&Math.hypot(event.clientX-touchPaletteDrag.startX,event.clientY-touchPaletteDrag.startY)>8){touchPaletteDrag.active=true;item.classList.add("dragging");}
+        if(touchPaletteDrag.active){event.preventDefault();showPaletteDropFeedback(touchPaletteDrag.type,event.clientX,event.clientY);}
+    });
+    item.addEventListener("pointerup",event=>{
+        if(!touchPaletteDrag||touchPaletteDrag.pointerId!==event.pointerId) return;
+        const active=touchPaletteDrag.active,type=touchPaletteDrag.type;touchPaletteDrag=null;
+        if(active&&document.elementFromPoint(event.clientX,event.clientY)?.closest("#canvasContainer")) addPaletteDeviceAt(type,event.clientX,event.clientY);
+        clearPaletteDropFeedback();
+    });
+    item.addEventListener("pointercancel",()=>{touchPaletteDrag=null;clearPaletteDropFeedback();});
+}
+
+function initializeDevicePalette(){
+    const palette=document.getElementById("devicePalette"),toggle=document.getElementById("btnTogglePalette"),search=document.getElementById("paletteSearch"),canvas=document.getElementById("canvasContainer");
+    renderDevicePalette();
+    toggle.addEventListener("click",()=>{const collapsed=palette.classList.toggle("collapsed");toggle.setAttribute("aria-expanded",String(!collapsed));toggle.setAttribute("aria-label",collapsed?"Expand device palette":"Collapse device palette");});
+    search.addEventListener("input",()=>renderDevicePalette(search.value));
+    canvas.addEventListener("dragover",event=>{const type=event.dataTransfer.getData("text/x-device-type")||draggedPaletteType;if(!DEVICE_TYPES.has(type))return;event.preventDefault();event.dataTransfer.dropEffect="copy";showPaletteDropFeedback(type,event.clientX,event.clientY);});
+    canvas.addEventListener("dragleave",event=>{if(!canvas.contains(event.relatedTarget))clearPaletteDropFeedback();});
+    canvas.addEventListener("drop",event=>{const type=event.dataTransfer.getData("text/x-device-type")||draggedPaletteType;if(!DEVICE_TYPES.has(type))return;event.preventDefault();addPaletteDeviceAt(type,event.clientX,event.clientY);draggedPaletteType=null;clearPaletteDropFeedback();});
+}
 loadFromLocalStorage();
 render();
 updateView();
@@ -2466,6 +2565,7 @@ deviceCategory.innerHTML='<option value="all">All Categories</option>';
 deviceCategory.addEventListener("change",populateDeviceLibrary);
 deviceSearch.addEventListener("input",populateDeviceLibrary);
 populateDeviceLibrary();
+initializeDevicePalette();
 const contextMenu=document.getElementById("contextMenu");
 
 const cmRename=document.getElementById("cmRename");
@@ -2741,38 +2841,9 @@ btnCloseDevice.onclick=function(){
 btnCreateDevice.onclick=function(){
 
     const type=deviceType.value;
-
-    const count=nodes.filter(n=>n.type===type).length+1;
-
-    const id=type+"_"+Date.now();
-
-    const label=getDeviceDefinition(type).label.toUpperCase()+"-"+String(count).padStart(3,"0");
-
-    recordHistory();
-
-    nodes.push({
-
-        id:id,
-
-        type:type,
-
-        text:label,
-        model:deviceModel.value,
-        portCount:getDeviceDefinition(type).ports>0 ? Number(devicePortCount.value) : 0,
-        iconType:deviceIconMode.value==="custom"&&pendingDeviceIconData?"custom":"default",
-        iconData:deviceIconMode.value==="custom"?pendingDeviceIconData:"",
-        pictureData:"",
-        status:"active",
-        statusNote:"",
-        x:getNextDevicePosition().x,
-        y:getNextDevicePosition().y
-
-    });
+    addDevice(type,{model:deviceModel.value,portCount:Number(devicePortCount.value),iconType:deviceIconMode.value,iconData:pendingDeviceIconData});
 
     deviceModal.style.display="none";
-
-    render();
-    saveToLocalStorage();
 
 };
 
