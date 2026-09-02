@@ -149,7 +149,7 @@
 
             <select id="propModel"></select>
 
-            <label for="propPortCount">Port Count</label>
+            <label id="propPortCountLabel" for="propPortCount">Port Count</label>
 
             <select id="propPortCount"></select>
 
@@ -173,6 +173,11 @@
             <textarea
                 id="propNotes"
                 rows="8"></textarea>
+
+            <section id="connectionStatus" class="connectionStatus" hidden>
+                <h3 id="connectionStatusTitle">Connection Ports</h3>
+                <div id="connectionStatusList"></div>
+            </section>
 
             <button id="btnUpdate">
 
@@ -221,13 +226,15 @@
                 <small>Drag bend points to shape the route. Double-click a segment to add one; select a point and press Delete to remove it.</small>
             </div>
 
-            <label for="propSourcePort">Source Port</label>
+            <label id="propSourcePortLabel" for="propSourcePort">Source Port</label>
 
             <select id="propSourcePort"></select>
 
-            <label for="propTargetPort">Target Port</label>
+            <label id="propTargetPortLabel" for="propTargetPort">Target Port</label>
 
             <select id="propTargetPort"></select>
+
+            <dl id="connectionDetail" class="connectionDetail"></dl>
 
             <label class="checkLabel" for="propLabelFollowsLine">
                 <input id="propLabelFollowsLine" type="checkbox" checked>
