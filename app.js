@@ -396,6 +396,7 @@ function restoreDiagramState(state,shouldPersist=true){
     selectedWaypointIndex=null;
     contextTarget=null;
     linkMode=false;
+    document.getElementById("propertyPanel").hidden=true;
     document.getElementById("btnCancelLink").hidden=true;
     firstLinkNode=null;
 
@@ -1012,6 +1013,7 @@ nodesLayer.appendChild(g);
 
 function showNodeProperties(){
 
+    document.getElementById("propertyPanel").hidden=false;
     document.getElementById("nodeProperties").style.display="";
     document.getElementById("linkProperties").style.display="none";
 
@@ -1019,9 +1021,20 @@ function showNodeProperties(){
 
 function showLinkProperties(){
 
+    document.getElementById("propertyPanel").hidden=false;
     document.getElementById("nodeProperties").style.display="none";
     document.getElementById("linkProperties").style.display="";
 
+}
+
+function hideProperties(){
+    document.getElementById("propertyPanel").hidden=true;
+    selectedNode=null;
+    selectedElement=null;
+    selectedLink=null;
+    selectedWaypointIndex=null;
+    document.querySelectorAll(".node").forEach(node=>node.classList.remove("selected"));
+    drawLinksOnly();
 }
 
 function getNodeLabel(id){
@@ -2169,6 +2182,7 @@ function loadLayout(data){
     snapEnabled=layout.snapEnabled!==false;
     diagramBackground=normalizeBackground(layout.background);
     selectedNode=null; selectedElement=null; selectedLink=null; contextTarget=null; firstLinkNode=null; linkMode=false;
+    document.getElementById("propertyPanel").hidden=true;
     const cancelButton=document.getElementById("btnCancelLink");
     if(cancelButton) cancelButton.hidden=true;
     applyTheme();
@@ -2512,6 +2526,10 @@ function initializeDevicePalette(){
     canvas.addEventListener("dragleave",event=>{if(!canvas.contains(event.relatedTarget))clearPaletteDropFeedback();});
     canvas.addEventListener("drop",event=>{const type=event.dataTransfer.getData("text/x-device-type")||draggedPaletteType;if(!DEVICE_TYPES.has(type))return;event.preventDefault();addPaletteDeviceAt(type,event.clientX,event.clientY);draggedPaletteType=null;clearPaletteDropFeedback();});
 }
+document.getElementById("canvasContainer").addEventListener("click",event=>{
+    if(event.target.closest?.(".node,.waypointHandle")||event.target.dataset?.linkId) return;
+    hideProperties();
+});
 loadFromLocalStorage();
 render();
 updateView();
@@ -2933,9 +2951,10 @@ function deleteNodeById(id){
     for(let i=links.length-1;i>=0;i--) if(links[i].from===id||links[i].to===id) links.splice(i,1);
     if(firstLinkNode?.id===id) cancelLinkMode();
     selectedNode=null; selectedElement=null; selectedLink=null; selectedWaypointIndex=null; contextTarget=null;
-    showNodeProperties(); render();
+    render();
     if(retainedSelectedId) selectNodeById(retainedSelectedId);
     else{
+        hideProperties();
         document.getElementById("connectionStatus").hidden=true;
         document.getElementById("connectionStatusList").innerHTML="";
     }
