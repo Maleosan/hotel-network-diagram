@@ -61,7 +61,21 @@
 
 <div id="workspace">
 
+    <aside id="devicePalette" aria-label="Add device palette">
+        <div class="paletteHeader">
+            <strong>Add Device</strong>
+            <button id="btnTogglePalette" type="button" aria-expanded="true" aria-label="Collapse device palette">‹</button>
+        </div>
+        <div id="paletteContent">
+            <label class="srOnly" for="paletteSearch">Search palette devices</label>
+            <input id="paletteSearch" type="search" placeholder="Search devices...">
+            <div id="paletteCategories"></div>
+        </div>
+    </aside>
+
     <div id="canvasContainer">
+
+        <div id="paletteDropPreview" aria-hidden="true"></div>
 
         <svg id="diagram">
 
