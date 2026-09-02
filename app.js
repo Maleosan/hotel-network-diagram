@@ -10,6 +10,7 @@ const gridLayer = document.getElementById("gridLayer");
 
 const nodesLayer = document.getElementById("nodes");
 const linksLayer = document.getElementById("links");
+const annotationsLayer = document.getElementById("annotations");
 
 const SVGNS = "http://www.w3.org/2000/svg";
 
@@ -24,6 +25,9 @@ let offsetY = 0;
 
 let selectedElement = null;
 let selectedLink = null;
+let selectedAnnotation = null;
+let pendingAnnotation = null;
+let annotationDrag = null;
 let linkEditHistoryRecorded = false;
 let selectedWaypointIndex = null;
 let waypointDrag = null;
@@ -346,6 +350,7 @@ function applyLinkAppearance(line,link){
 }
 
 const links = DEFAULT_LINKS.map(normalizeLink);
+const annotations=[];
 
 /* ==========================================================
    UNDO / REDO HISTORY
@@ -361,6 +366,8 @@ function cloneDiagramState(){
 
         nodes:nodes.map(node=>({...node})),
         links:links.map(cloneLink),
+
+        annotations:annotations.map(annotation=>({...annotation})),
         diagramName,
         background:{...diagramBackground}
 
@@ -385,6 +392,7 @@ function restoreDiagramState(state,shouldPersist=true){
         links.push(cloneLink(link));
 
     });
+    annotations.splice(0,annotations.length,...(state.annotations||[]).map(annotation=>({...annotation})));
     diagramName=state.diagramName || diagramName;
     diagramBackground={...diagramBackground,...(state.background||{})};
     applyDiagramBackground();
@@ -393,6 +401,8 @@ function restoreDiagramState(state,shouldPersist=true){
     selectedNode=null;
     selectedElement=null;
     selectedLink=null;
+    selectedAnnotation=null;
+    pendingAnnotation=null;
     selectedWaypointIndex=null;
     contextTarget=null;
     linkMode=false;
@@ -637,7 +647,9 @@ function render(){
 
     nodesLayer.innerHTML="";
     linksLayer.innerHTML="";
+    annotationsLayer.innerHTML="";
 
+    annotations.forEach(drawAnnotation);
     drawLinks();
 
     nodes.forEach(drawNode);
@@ -684,6 +696,59 @@ function firstFreePort(nodeId,exceptId){
     const node=nodes.find(n=>n.id===nodeId);
     for(let port=1;port<=getPortCount(node);port++) if(!isPortUsed(nodeId,port,exceptId)) return port;
     return null;
+}
+
+function getActivePortCount(node){
+    const used=new Set();
+    links.forEach(link=>{
+        if(link.from===node.id&&link.sourcePort) used.add(link.sourcePort);
+        if(link.to===node.id&&link.targetPort) used.add(link.targetPort);
+    });
+    return used.size;
+}
+
+function drawAnnotation(annotation){
+    const group=document.createElementNS(SVGNS,"g");
+    group.classList.add("annotation");
+    if(selectedAnnotation?.id===annotation.id) group.classList.add("selectedAnnotation");
+    group.dataset.annotationId=annotation.id;
+    group.setAttribute("transform",`translate(${annotation.x},${annotation.y})`);
+    if(annotation.type==="image"){
+        const image=document.createElementNS(SVGNS,"image");
+        image.setAttribute("href",annotation.data);image.setAttribute("width",annotation.width);image.setAttribute("height",annotation.height);image.setAttribute("preserveAspectRatio","xMidYMid meet");
+        const frame=document.createElementNS(SVGNS,"rect");frame.classList.add("annotationImageFrame");frame.setAttribute("width",annotation.width);frame.setAttribute("height",annotation.height);
+        group.append(image,frame);
+    }else{
+        const text=document.createElementNS(SVGNS,"text");text.classList.add("annotationText");
+        String(annotation.text||"").split("\n").forEach((line,index)=>{const span=document.createElementNS(SVGNS,"tspan");span.setAttribute("x",0);span.setAttribute("dy",index?"1.25em":"0");span.textContent=line;text.appendChild(span);});
+        group.appendChild(text);
+    }
+    group.addEventListener("pointerdown",startAnnotationDrag);
+    group.addEventListener("click",event=>{event.stopPropagation();selectedAnnotation=annotation;selectedNode=null;selectedLink=null;hideProperties();selectedAnnotation=annotation;group.classList.add("selectedAnnotation");});
+    group.addEventListener("dblclick",event=>{event.stopPropagation();if(annotation.type!=="text")return;const value=prompt("Edit text",annotation.text);if(value===null||!value.trim())return;recordHistory();annotation.text=value.trim().slice(0,500);render();saveToLocalStorage();});
+    annotationsLayer.appendChild(group);
+}
+
+function startAnnotationDrag(event){
+    if(event.pointerType==="mouse"&&event.button!==0)return;
+    event.preventDefault();event.stopPropagation();
+    const annotation=annotations.find(item=>item.id===event.currentTarget.dataset.annotationId);if(!annotation)return;
+    selectedAnnotation=annotation;selectedNode=null;selectedLink=null;document.getElementById("propertyPanel").hidden=true;
+    const point=getViewportPoint(event);annotationDrag={annotation,pointerId:event.pointerId,offsetX:point.x-annotation.x,offsetY:point.y-annotation.y,startX:annotation.x,startY:annotation.y,element:event.currentTarget};
+    annotationsLayer.querySelectorAll(".selectedAnnotation").forEach(item=>item.classList.remove("selectedAnnotation"));event.currentTarget.classList.add("selectedAnnotation");event.currentTarget.setPointerCapture?.(event.pointerId);
+}
+
+function moveAnnotation(event){
+    if(!annotationDrag||event.pointerId!==annotationDrag.pointerId)return;
+    event.preventDefault();const point=getViewportPoint(event),position=getSnappedPosition(point.x-annotationDrag.offsetX,point.y-annotationDrag.offsetY);
+    annotationDrag.annotation.x=position.x;annotationDrag.annotation.y=position.y;
+    const current=annotationsLayer.querySelector(`[data-annotation-id="${CSS.escape(annotationDrag.annotation.id)}"]`);if(current)current.setAttribute("transform",`translate(${position.x},${position.y})`);
+}
+
+function stopAnnotationDrag(event){
+    if(!annotationDrag||event.pointerId!==annotationDrag.pointerId)return;
+    const drag=annotationDrag;annotationDrag=null;
+    if(drag.startX!==drag.annotation.x||drag.startY!==drag.annotation.y){const end={x:drag.annotation.x,y:drag.annotation.y};drag.annotation.x=drag.startX;drag.annotation.y=drag.startY;recordHistory();drag.annotation.x=end.x;drag.annotation.y=end.y;saveToLocalStorage();render();}
 }
 
 /* ==========================================================
@@ -943,6 +1008,11 @@ if(node.type==="pabx"){
         const title=document.createElementNS(SVGNS,"title");title.textContent=`${status}${node.statusNote?`: ${node.statusNote}`:""}`;badge.appendChild(title);g.appendChild(badge);
     }
 
+    const portCount=getPortCount(node);
+    if(portCount>1){
+        const usage=document.createElementNS(SVGNS,"text");usage.classList.add("portUsageText");usage.setAttribute("x",45);usage.setAttribute("y",61);usage.setAttribute("text-anchor","middle");usage.textContent=`${getActivePortCount(node)}/${portCount}`;g.appendChild(usage);
+    }
+
     //------------------------------------
 
     const text=document.createElementNS(SVGNS,"text");
@@ -1032,6 +1102,7 @@ function hideProperties(){
     selectedNode=null;
     selectedElement=null;
     selectedLink=null;
+    selectedAnnotation=null;
     selectedWaypointIndex=null;
     document.querySelectorAll(".node").forEach(node=>node.classList.remove("selected"));
     drawLinksOnly();
@@ -1807,6 +1878,8 @@ svg.addEventListener("contextmenu",function(e){
 });
 svg.addEventListener("pointermove",function(e){
 
+    if(annotationDrag){moveAnnotation(e);return;}
+
     if(moveWaypoint(e)) return;
 
     if(panMode){
@@ -1884,6 +1957,8 @@ window.addEventListener("pointerup",stopDrag);
 window.addEventListener("pointercancel",stopDrag);
 window.addEventListener("pointerup",stopWaypointDrag);
 window.addEventListener("pointercancel",stopWaypointDrag);
+window.addEventListener("pointerup",stopAnnotationDrag);
+window.addEventListener("pointercancel",stopAnnotationDrag);
 
 /* ==========================================================
    REDRAW LINKS ONLY
@@ -2011,6 +2086,8 @@ function createLayoutData(){
         })),
 
         links:links.map(cloneLink),
+
+        annotations:annotations.map(annotation=>({...annotation})),
 
         zoom:zoom,
         viewX:viewX,
@@ -2173,6 +2250,13 @@ function loadLayout(data){
 
     nodes.splice(0,nodes.length,...nextNodes);
     links.splice(0,links.length,...nextLinks);
+    const nextAnnotations=(Array.isArray(layout.annotations)?layout.annotations:[]).flatMap(raw=>{
+        if(!raw||!Number.isFinite(Number(raw.x))||!Number.isFinite(Number(raw.y)))return[];
+        if(raw.type==="text"&&String(raw.text||"").trim())return[{id:uniqueId("annotation"),type:"text",text:String(raw.text).slice(0,500),x:Number(raw.x),y:Number(raw.y)}];
+        if(raw.type==="image"&&isSafeImageData(raw.data))return[{id:uniqueId("annotation"),type:"image",data:raw.data,width:Math.min(1200,Math.max(40,Number(raw.width)||240)),height:Math.min(900,Math.max(40,Number(raw.height)||160)),x:Number(raw.x),y:Number(raw.y)}];
+        return[];
+    });
+    annotations.splice(0,annotations.length,...nextAnnotations);
     zoom=Number.isFinite(Number(layout.zoom))?Math.min(4,Math.max(.3,Number(layout.zoom))):1;
     viewX=Number.isFinite(Number(layout.viewX))?Number(layout.viewX):0;
     viewY=Number.isFinite(Number(layout.viewY))?Number(layout.viewY):0;
@@ -2181,7 +2265,7 @@ function loadLayout(data){
     gridEnabled=layout.gridEnabled!==false;
     snapEnabled=layout.snapEnabled!==false;
     diagramBackground=normalizeBackground(layout.background);
-    selectedNode=null; selectedElement=null; selectedLink=null; contextTarget=null; firstLinkNode=null; linkMode=false;
+    selectedNode=null; selectedElement=null; selectedLink=null; selectedAnnotation=null; pendingAnnotation=null; contextTarget=null; firstLinkNode=null; linkMode=false;
     document.getElementById("propertyPanel").hidden=true;
     const cancelButton=document.getElementById("btnCancelLink");
     if(cancelButton) cancelButton.hidden=true;
@@ -2210,7 +2294,7 @@ function getDiagramBounds(){
 
     const padding=50;
 
-    if(nodes.length===0){
+    if(nodes.length===0&&annotations.length===0){
 
         return{
             x:-padding,
@@ -2234,6 +2318,10 @@ function getDiagramBounds(){
         maxY=Math.max(maxY,node.y+NODE_HEIGHT);
 
     });
+    annotations.forEach(annotation=>{
+        const width=annotation.type==="image"?annotation.width:Math.max(80,String(annotation.text||"").length*10),height=annotation.type==="image"?annotation.height:30;
+        minX=Math.min(minX,annotation.x);minY=Math.min(minY,annotation.y-height);maxX=Math.max(maxX,annotation.x+width);maxY=Math.max(maxY,annotation.y+height);
+    });
 
     return{
         x:minX-padding,
@@ -2255,6 +2343,8 @@ function createExportStyles(){
         .link{fill:none;}
         .linkLabel{fill:#ffffff;font-family:Segoe UI,Arial,sans-serif;font-size:12px;text-anchor:middle;paint-order:stroke;stroke:#202020;stroke-width:4px;stroke-linejoin:round;}
         .node .statusBadge{stroke:#ffffff;stroke-width:2;}.statusBadge.active{fill:#27ae60;}.statusBadge.inactive{fill:#7f8c8d;}.statusBadge.problem{fill:#e53935;}
+        .node .portUsageText{fill:#7ee0ff;font-size:10px;font-weight:600;paint-order:stroke;stroke:#202020;stroke-width:3px;}
+        .annotationText{fill:#ffffff;font-family:Segoe UI,Arial,sans-serif;font-size:18px;font-weight:600;paint-order:stroke;stroke:#202020;stroke-width:4px;}
     `;
 
     return style;
@@ -2273,12 +2363,13 @@ function buildExportSVG(){
     exportSvg.appendChild(createExportStyles());
     appendExportBackground(exportSvg,bounds);
     const group=document.createElementNS(SVGNS,"g");
+    const exportAnnotations=annotationsLayer.cloneNode(true);exportAnnotations.querySelectorAll(".selectedAnnotation").forEach(item=>item.classList.remove("selectedAnnotation"));exportAnnotations.querySelectorAll(".annotationImageFrame").forEach(frame=>frame.remove());
     const exportLinks=linksLayer.cloneNode(true);
     exportLinks.querySelectorAll('[stroke="transparent"]').forEach(hit=>hit.remove());
     exportLinks.querySelectorAll(".waypointHandle").forEach(handle=>handle.remove());
     const exportNodes=nodesLayer.cloneNode(true);
     exportNodes.querySelectorAll(".selected").forEach(node=>node.classList.remove("selected"));
-    group.append(exportLinks,exportNodes); exportSvg.appendChild(group);
+    group.append(exportAnnotations,exportLinks,exportNodes); exportSvg.appendChild(group);
     return {exportSvg,bounds};
 }
 
@@ -2527,7 +2618,11 @@ function initializeDevicePalette(){
     canvas.addEventListener("drop",event=>{const type=event.dataTransfer.getData("text/x-device-type")||draggedPaletteType;if(!DEVICE_TYPES.has(type))return;event.preventDefault();addPaletteDeviceAt(type,event.clientX,event.clientY);draggedPaletteType=null;clearPaletteDropFeedback();});
 }
 document.getElementById("canvasContainer").addEventListener("click",event=>{
-    if(event.target.closest?.(".node,.waypointHandle")||event.target.dataset?.linkId) return;
+    if(event.target.closest?.(".node,.waypointHandle,.annotation")||event.target.dataset?.linkId) return;
+    if(pendingAnnotation){
+        const point=getViewportPoint(event),position=getSnappedPosition(point.x,point.y);
+        recordHistory();annotations.push({...pendingAnnotation,id:uniqueId("annotation"),x:position.x,y:position.y});pendingAnnotation=null;render();saveToLocalStorage();showFeedback("Annotation added",false);return;
+    }
     hideProperties();
 });
 loadFromLocalStorage();
@@ -2548,6 +2643,9 @@ const btnRedo=document.getElementById("btnRedo");
 const fileOpen=document.getElementById("fileOpen");
 
 const btnAddDevice=document.getElementById("btnAddDevice");
+const btnAddText=document.getElementById("btnAddText");
+const btnAddImage=document.getElementById("btnAddImage");
+const annotationImageFile=document.getElementById("annotationImageFile");
 const btnAddLink=document.getElementById("btnAddLink");
 const btnExportPNG=document.getElementById("btnExportPNG");
 const btnReset=document.getElementById("btnReset");
@@ -2746,6 +2844,17 @@ btnAddDevice.onclick=function(){
     deviceType.focus();
 
 };
+btnAddText.onclick=function(){
+    const value=prompt("Text information");if(value===null||!value.trim())return;
+    pendingAnnotation={type:"text",text:value.trim().slice(0,500)};
+    document.getElementById("statusBar").textContent="Click an empty canvas area to place the text";
+};
+btnAddImage.onclick=()=>annotationImageFile.click();
+annotationImageFile.addEventListener("change",async function(){
+    const file=this.files[0];this.value="";if(!file)return;
+    try{const data=await processImageFile(file,1200,900,.86);pendingAnnotation={type:"image",data,width:240,height:160};document.getElementById("statusBar").textContent="Click an empty canvas area to place the image";}
+    catch(error){showFeedback(error.message,true);}
+});
 deviceIconMode.addEventListener("change",function(){
     if(this.value==="custom") deviceIconFile.click();
     else{pendingDeviceIconData="";setDefaultIconPreview(deviceIconPreview,{type:deviceType.value,model:deviceModel.value});}
@@ -2881,6 +2990,7 @@ function getNextDevicePosition(){
 document.addEventListener("keydown",function(e){
 
     if(e.key==="Escape"){
+        if(pendingAnnotation){pendingAnnotation=null;document.getElementById("statusBar").textContent="Ready";}
         if(deviceModal.style.display==="flex"){deviceModal.style.display="none";btnAddDevice.focus();}
         if(backgroundModal.style.display==="flex"){backgroundModal.style.display="none";btnBackground.focus();}
         contextMenu.style.display="none";
@@ -2909,6 +3019,8 @@ document.addEventListener("keydown",function(e){
     }
 
     if(e.key!=="Delete") return;
+
+    if(selectedAnnotation){recordHistory();const index=annotations.findIndex(item=>item.id===selectedAnnotation.id);if(index>=0)annotations.splice(index,1);selectedAnnotation=null;render();saveToLocalStorage();return;}
 
     if(deleteSelectedWaypoint()) return;
 
