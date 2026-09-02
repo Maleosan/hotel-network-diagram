@@ -98,8 +98,8 @@ const DEVICE_LIBRARY={
     camera:{category:"CCTV & Access",label:"IP Camera",icon:"camera",ports:1,status:true,models:["IP Camera","Bullet Camera"]},
     dome_camera:{category:"CCTV & Access",label:"Dome Camera",icon:"dome_camera",ports:1,status:true,models:["Indoor Dome","Outdoor Dome"]},
     ptz_camera:{category:"CCTV & Access",label:"PTZ Camera",icon:"ptz_camera",ports:1,status:true,models:["PTZ Camera"]},
-    dvr:{category:"CCTV & Access",label:"DVR",icon:"recorder",ports:16,models:["8-Channel DVR","16-Channel DVR","32-Channel DVR"]},
-    nvr:{category:"CCTV & Access",label:"NVR",icon:"recorder",ports:16,models:["8-Channel NVR","16-Channel NVR","32-Channel NVR"]},
+    dvr:{category:"CCTV & Access",label:"DVR",icon:"recorder",ports:16,connectionUnit:"Channel",models:["8-Channel DVR","16-Channel DVR","32-Channel DVR"],modelCapabilities:{"8-Channel DVR":{channelCount:8},"16-Channel DVR":{channelCount:16},"32-Channel DVR":{channelCount:32}}},
+    nvr:{category:"CCTV & Access",label:"NVR",icon:"recorder",ports:16,connectionUnit:"Channel",models:["8-Channel NVR","16-Channel NVR","32-Channel NVR"],modelCapabilities:{"8-Channel NVR":{channelCount:8},"16-Channel NVR":{channelCount:16},"32-Channel NVR":{channelCount:32}}},
     cctv_monitor:{category:"CCTV & Access",label:"CCTV Monitor",icon:"monitor",ports:2,models:["CCTV Monitor"]},
     access_control:{category:"CCTV & Access",label:"Access Control",icon:"access",ports:4,models:["Access Control Panel"]},
     door_controller:{category:"CCTV & Access",label:"Door Controller",icon:"door",ports:4,models:["Door Lock Controller"]},
@@ -644,8 +644,33 @@ function render(){
 }
 
 function getPortCount(node){
+    const definition=node?getDeviceDefinition(node.type):null;
+    const modelCount=definition?.connectionUnit==="Channel"?getModelConnectionCount(definition,node.model):null;
+    if(Number.isInteger(modelCount)&&modelCount>=0) return modelCount;
     const value=Number(node && node.portCount);
     return Number.isInteger(value) && value>=0 ? value : (DEFAULT_PORTS[node?.type] || 0);
+}
+
+function getModelConnectionCount(definition,model){
+    const capability=definition?.modelCapabilities?.[model];
+    if(Number.isInteger(capability?.channelCount)) return capability.channelCount;
+    if(Number.isInteger(capability?.portCount)) return capability.portCount;
+    const match=String(model||"").match(/(\d+)[- ](?:Channel|Port)/i);
+    return match ? Number(match[1]) : Number(definition?.ports)||0;
+}
+
+function getConnectionUnit(node){
+    return getDeviceDefinition(node?.type).connectionUnit || "Port";
+}
+
+function formatConnectionPoint(node,port,short=false){
+    if(!port) return "Automatic / none";
+    const unit=getConnectionUnit(node);
+    return `${short&&unit==="Channel"?"Ch":unit} ${port}`;
+}
+
+function escapeHtml(value){
+    return String(value??"").replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));
 }
 
 function isPortUsed(nodeId,port,exceptId){
@@ -1016,15 +1041,22 @@ function deleteSelectedLink(){
     if(idx>=0){
 
         recordHistory();
+        const localNodeId=selectedLink.from;
         links.splice(idx,1);
         selectedLink=null;
         selectedWaypointIndex=null;
         showNodeProperties();
         render();
+        selectNodeById(localNodeId);
         saveToLocalStorage();
 
     }
 
+}
+
+function selectNodeById(id){
+    const element=nodesLayer.querySelector(`.node[data-id="${CSS.escape(id)}"]`);
+    if(element) element.dispatchEvent(new MouseEvent("click",{bubbles:true}));
 }
 
 function selectLinkById(id){
@@ -1044,7 +1076,11 @@ function selectLinkById(id){
 
     const appearance=getLinkAppearance(selectedLink);
 
-    document.getElementById("propLinkName").value=`${getNodeLabel(selectedLink.from)}${selectedLink.sourcePort?` [P${selectedLink.sourcePort}]`:""} → ${getNodeLabel(selectedLink.to)}${selectedLink.targetPort?` [P${selectedLink.targetPort}]`:""}`;
+    const sourceNode=nodes.find(node=>node.id===selectedLink.from),targetNode=nodes.find(node=>node.id===selectedLink.to);
+    document.getElementById("propLinkName").value=`${getNodeLabel(selectedLink.from)}${selectedLink.sourcePort?` [${formatConnectionPoint(sourceNode,selectedLink.sourcePort,true)}]`:""} → ${getNodeLabel(selectedLink.to)}${selectedLink.targetPort?` [${formatConnectionPoint(targetNode,selectedLink.targetPort,true)}]`:""}`;
+    document.getElementById("propSourcePortLabel").textContent=`Source ${getConnectionUnit(sourceNode)}`;
+    document.getElementById("propTargetPortLabel").textContent=`Target ${getConnectionUnit(targetNode)}`;
+    document.getElementById("connectionDetail").innerHTML=`<dt>Local Device</dt><dd>${escapeHtml(getNodeLabel(sourceNode.id))}</dd><dt>Local ${getConnectionUnit(sourceNode)}</dt><dd>${escapeHtml(formatConnectionPoint(sourceNode,selectedLink.sourcePort))}</dd><dt>Remote Device</dt><dd>${escapeHtml(getNodeLabel(targetNode.id))}</dd><dt>Remote ${getConnectionUnit(targetNode)}</dt><dd>${escapeHtml(formatConnectionPoint(targetNode,selectedLink.targetPort))}</dd><dt>Status</dt><dd>Connected</dd>${targetNode.status?`<dt>Remote Device Status</dt><dd>${escapeHtml(targetNode.status)}</dd>`:""}`;
     document.getElementById("propLinkLabel").value=selectedLink.label || "";
     document.getElementById("propLabelFollowsLine").checked=appearance.labelFollowsLine!==false;
     populatePortSelect("propSourcePort",selectedLink.from,selectedLink.sourcePort,selectedLink.id);
@@ -1076,7 +1112,7 @@ function populatePortSelect(id,nodeId,current,linkId){
     for(let port=1;port<=getPortCount(node);port++){
         if(!isPortUsed(nodeId,port,linkId) || port===current){
             const option=document.createElement("option");
-            option.value=port; option.textContent=`Port ${port}`; select.appendChild(option);
+            option.value=port; option.textContent=formatConnectionPoint(node,port); select.appendChild(option);
         }
     }
     select.value=current || "";
@@ -1466,7 +1502,9 @@ if(linkMode){
 
         recordHistory();
 
-        links.push(normalizeLink({from:firstLinkNode.id,to:selectedNode.id,sourcePort,targetPort}));
+        const newLink=normalizeLink({from:firstLinkNode.id,to:selectedNode.id,sourcePort,targetPort});
+        links.push(newLink);
+        selectedLink=newLink;
         }
 
     }else if(firstLinkNode.id===selectedNode.id){
@@ -1486,7 +1524,10 @@ if(linkMode){
     render();
     saveToLocalStorage();
 
-    if(!linkError) document.getElementById("statusBar").textContent="Ready";
+    if(!linkError){
+        document.getElementById("statusBar").textContent="Connection created — choose its port/channel in Properties";
+        selectLinkById(selectedLink.id);
+    }
 
     return;
 
@@ -1506,6 +1547,8 @@ if(linkMode){
     document.getElementById("propNotes").value=
         selectedNode.notes || "";
 
+    renderConnectionStatus(selectedNode);
+
     document.getElementById("propStatus").value=["active","inactive","problem"].includes(selectedNode.status)?selectedNode.status:"active";
     document.getElementById("propStatusNote").value=selectedNode.statusNote||"";
 
@@ -1522,6 +1565,7 @@ function populatePropertyDeviceFields(node,typeOverride=null){
     }
     const type=typeOverride||node.type;typeSelect.value=DEVICE_LIBRARY[type]?type:"pc";
     const definition=getDeviceDefinition(typeSelect.value);modelSelect.innerHTML="";
+    document.getElementById("propPortCountLabel").textContent=definition.connectionUnit==="Channel"?"Channel Count":"Port Count";
     definition.models.forEach(name=>{const option=document.createElement("option");option.value=name;option.textContent=name;modelSelect.appendChild(option);});
     const preserve=type===node.type;
     if(preserve&&node.model&&!definition.models.includes(node.model)){const legacy=document.createElement("option");legacy.value=node.model;legacy.textContent=node.model;modelSelect.appendChild(legacy);}
@@ -1532,10 +1576,34 @@ function populatePropertyDeviceFields(node,typeOverride=null){
 
 function populatePropertyPorts(current,definition,model){
     const select=document.getElementById("propPortCount");select.innerHTML="";
-    const match=String(model).match(/(\d+)[- ]Port/i),suggested=match?Number(match[1]):definition.ports;
+    const suggested=getModelConnectionCount(definition,model);
     const values=definition.ports>0?[...new Set([suggested,definition.ports].filter(value=>value>0))]:[0];
     values.forEach(value=>{const option=document.createElement("option");option.value=value;option.textContent=value;select.appendChild(option);});
     select.value=values.includes(Number(current))?String(current):String(values[0]);
+}
+
+function renderConnectionStatus(node){
+    const section=document.getElementById("connectionStatus");
+    const list=document.getElementById("connectionStatusList");
+    const count=getPortCount(node);
+    section.hidden=count===0;
+    list.innerHTML="";
+    if(count===0) return;
+    document.getElementById("connectionStatusTitle").textContent=`Connection ${getConnectionUnit(node)}s`;
+    for(let port=1;port<=count;port++){
+        const link=links.find(item=>(item.from===node.id&&item.sourcePort===port)||(item.to===node.id&&item.targetPort===port));
+        const row=document.createElement(link?"button":"div");
+        row.className=`connectionStatusRow ${link?"connected":"available"}`;
+        const remoteId=link?(link.from===node.id?link.to:link.from):null;
+        const remote=remoteId?nodes.find(item=>item.id===remoteId):null;
+        row.innerHTML=`<span>${formatConnectionPoint(node,port,true)}</span><strong>${remote?escapeHtml(getNodeLabel(remote.id)):"Not Connected"}</strong>`;
+        if(link){
+            row.type="button";
+            row.title=`Open connection to ${getNodeLabel(remote.id)}`;
+            row.addEventListener("click",()=>selectLinkById(link.id));
+        }
+        list.appendChild(row);
+    }
 }
 
 function setPreview(element,data,emptyText){
@@ -2310,10 +2378,11 @@ function updateDeviceOptions(){
     const definition=getDeviceDefinition(deviceType.value);
     lblModel.style.display="";deviceModel.style.display="";
     lblPortCount.style.display=definition.ports>0?"":"none";devicePortCount.style.display=definition.ports>0?"":"none";
+    lblPortCount.textContent=definition.connectionUnit==="Channel"?"Channel Count":"Port Count";
     deviceModel.innerHTML="";
     definition.models.forEach(name=>{
         const option=document.createElement("option");option.textContent=name;option.value=name;
-        const match=name.match(/(\d+)[- ]Port/i);option.dataset.ports=match?match[1]:definition.ports;deviceModel.appendChild(option);
+        option.dataset.ports=getModelConnectionCount(definition,name);deviceModel.appendChild(option);
     });
     syncModelPortOptions();
     if(typeof deviceIconMode!=="undefined"&&deviceIconMode.value==="default")setDefaultIconPreview(deviceIconPreview,{type:deviceType.value,model:deviceModel.value});
@@ -2787,12 +2856,19 @@ cmDelete.onclick=function(){
 function deleteNodeById(id){
     const idx=nodes.findIndex(n=>n.id===id);
     if(idx<0) return;
+    const retainedSelectedId=selectedNode&&selectedNode.id!==id?selectedNode.id:null;
     recordHistory();
     nodes.splice(idx,1);
     for(let i=links.length-1;i>=0;i--) if(links[i].from===id||links[i].to===id) links.splice(i,1);
     if(firstLinkNode?.id===id) cancelLinkMode();
     selectedNode=null; selectedElement=null; selectedLink=null; selectedWaypointIndex=null; contextTarget=null;
-    showNodeProperties(); render(); saveToLocalStorage();
+    showNodeProperties(); render();
+    if(retainedSelectedId) selectNodeById(retainedSelectedId);
+    else{
+        document.getElementById("connectionStatus").hidden=true;
+        document.getElementById("connectionStatusList").innerHTML="";
+    }
+    saveToLocalStorage();
 }
 cmRename.onclick=function(){
 
