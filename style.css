@@ -251,6 +251,8 @@ html,body{background:var(--page-bg);color:var(--text);}
 
 }
 
+#propertyPanel[hidden]{display:none;}
+
 #propertyPanel h2{
 
     margin-bottom:20px;
