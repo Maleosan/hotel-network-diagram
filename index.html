@@ -291,6 +291,37 @@
 
         </div>
 
+        <div id="annotationProperties" style="display:none;">
+            <h3>Annotation</h3>
+            <div id="textAnnotationProperties">
+                <label for="propAnnotationText">Text</label>
+                <textarea id="propAnnotationText" rows="5" maxlength="500"></textarea>
+                <label for="propAnnotationFontSize">Font Size</label>
+                <input id="propAnnotationFontSize" type="number" min="8" max="96" step="1">
+                <label for="propAnnotationColor">Text Color</label>
+                <input id="propAnnotationColor" type="color">
+                <label class="checkLabel" for="propAnnotationBold"><input id="propAnnotationBold" type="checkbox"> Bold</label>
+                <label class="checkLabel" for="propAnnotationItalic"><input id="propAnnotationItalic" type="checkbox"> Italic</label>
+                <label for="propAnnotationAlign">Alignment</label>
+                <select id="propAnnotationAlign"><option value="start">Left</option><option value="middle">Center</option><option value="end">Right</option></select>
+            </div>
+            <div id="imageAnnotationProperties">
+                <label for="propAnnotationWidth">Width</label>
+                <input id="propAnnotationWidth" type="number" min="40" max="1200" step="10">
+                <label for="propAnnotationHeight">Height</label>
+                <input id="propAnnotationHeight" type="number" min="40" max="900" step="10">
+                <label for="propAnnotationCropZoom">Crop Zoom</label>
+                <input id="propAnnotationCropZoom" type="range" min="1" max="4" step="0.05">
+                <label for="propAnnotationCropX">Crop Horizontal</label>
+                <input id="propAnnotationCropX" type="range" min="0" max="100" step="1">
+                <label for="propAnnotationCropY">Crop Vertical</label>
+                <input id="propAnnotationCropY" type="range" min="0" max="100" step="1">
+                <button id="btnResetAnnotationCrop" type="button">Reset Crop</button>
+            </div>
+            <button id="btnUpdateAnnotation" type="button">Update Annotation</button>
+            <button id="btnDeleteAnnotation" type="button">Delete Annotation</button>
+        </div>
+
     </div>
 
 </div>
