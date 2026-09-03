@@ -50,6 +50,8 @@
 
         <button id="btnReset">Reset View</button>
 
+        <button id="btnFitView">Fit View</button>
+
         <button id="btnResetDefault">Reset to Default Diagram</button>
 
         <button id="btnGrid" class="toggle active">Grid</button>
@@ -158,6 +160,15 @@
             <label for="propName">Name</label>
 
             <input id="propName">
+
+            <label for="propNameSize">Name Size</label>
+            <input id="propNameSize" type="number" min="8" max="48" step="1">
+
+            <label class="checkLabel" for="propNameThemeColor"><input id="propNameThemeColor" type="checkbox" checked> Name color follows theme</label>
+            <label for="propNameColor">Name Color</label>
+            <input id="propNameColor" type="color" value="#ffffff">
+
+            <label class="checkLabel" for="propNameBold"><input id="propNameBold" type="checkbox"> Bold name</label>
 
             <label for="propDeviceType">Device Type</label>
 
@@ -385,6 +396,7 @@
         <h2 id="backgroundModalTitle">Diagram Background</h2>
         <label for="backgroundType">Background</label>
         <select id="backgroundType">
+            <option value="theme">Follow Theme</option>
             <option value="dark">Dark</option>
             <option value="light">Light</option>
             <option value="color">Custom Color</option>
