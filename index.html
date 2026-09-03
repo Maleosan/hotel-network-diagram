@@ -8,7 +8,7 @@
 
 <title>Hotel Network Diagram</title>
 
-<link rel="stylesheet" href="style.css?v=20260903-5">
+<link rel="stylesheet" href="style.css?v=20260903-6">
 
 </head>
 <body>
@@ -65,6 +65,8 @@
         <button id="btnTheme" aria-pressed="false">Dark / Light</button>
 
         <button id="btnBackground">Background</button>
+
+        <button id="btnDiagramSettings">⚙ Device Settings</button>
 
     </div>
 
@@ -170,13 +172,26 @@
             <label for="propNameSize">Name Size</label>
             <input id="propNameSize" type="number" min="8" max="48" step="1">
 
-            <label class="checkLabel" for="propNameThemeColor"><input id="propNameThemeColor" type="checkbox" checked> Name color follows theme</label>
+            <label class="checkLabel" for="propNameThemeColor"><input id="propNameThemeColor" type="checkbox" checked> Use global name color</label>
             <label for="propNameColor">Name Color</label>
             <input id="propNameColor" type="color" value="#ffffff">
 
             <label class="checkLabel" for="propNameBold"><input id="propNameBold" type="checkbox"> Bold name</label>
 
             <button id="btnApplyNameStyleAll" class="secondaryAction" type="button">Apply Name Style to All Devices</button>
+
+            <fieldset class="propertyGroup">
+                <legend>Device Size</legend>
+                <div class="propertyColumns">
+                    <label for="propDeviceWidth">Width
+                        <input id="propDeviceWidth" type="number" min="50" max="400" step="10">
+                    </label>
+                    <label for="propDeviceHeight">Height
+                        <input id="propDeviceHeight" type="number" min="50" max="300" step="10">
+                    </label>
+                </div>
+                <small>Base size in pixels. Global Device Scale is applied separately.</small>
+            </fieldset>
 
             <label for="propDeviceType">Device Type</label>
 
@@ -206,6 +221,7 @@
 
                 <label for="propStatusTextSize">Status Text Size</label>
                 <input id="propStatusTextSize" type="number" min="8" max="32" step="1">
+                <label class="checkLabel" for="propStatusUseGlobalSize"><input id="propStatusUseGlobalSize" type="checkbox" checked> Use global status text size</label>
 
                 <label class="checkLabel" for="propStatusUseDefaultColors"><input id="propStatusUseDefaultColors" type="checkbox" checked> Use Active/Broken/Inactive colors</label>
                 <label for="propStatusTextColor">Status Text Color</label>
@@ -439,6 +455,26 @@
     </div>
 </div>
 
+<div id="diagramSettingsModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="diagramSettingsModalTitle">
+    <div class="modalContent settingsContent">
+        <h2 id="diagramSettingsModalTitle">Device Settings</h2>
+
+        <label for="globalDeviceScale">Global Device Size</label>
+        <input id="globalDeviceScale" type="number" min="50" max="200" step="10" value="100">
+        <small>Percent (50–200%). Individual device width and height remain unchanged.</small>
+
+        <label for="defaultDeviceNameColor">Default Device Name Text Color</label>
+        <input id="defaultDeviceNameColor" type="color" value="#ffffff">
+        <label class="checkLabel" for="defaultDeviceNameUseTheme"><input id="defaultDeviceNameUseTheme" type="checkbox" checked> Follow diagram theme</label>
+
+        <label for="globalStatusTextSize">Global Status Text Size</label>
+        <input id="globalStatusTextSize" type="number" min="8" max="32" step="1" value="10">
+        <small>Used by devices that have “Use global status text size” enabled.</small>
+
+        <button id="btnCloseDiagramSettings" type="button">Close</button>
+    </div>
+</div>
+
 <div id="statusCheckModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="statusCheckModalTitle">
     <div class="modalContent statusCheckContent">
         <h2 id="statusCheckModalTitle">Check Device Status</h2>
@@ -454,8 +490,14 @@
 <div id="githubUpdateModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="githubUpdateModalTitle">
     <div class="modalContent githubSaveContent">
         <h2 id="githubUpdateModalTitle">Update from GitHub</h2>
-        <p>Update diagram dari GitHub?<br>Data diagram saat ini akan digantikan dengan versi terbaru dari GitHub.</p>
-        <small>Master JSON: <strong>main/data/HOTEL-NETWORK-DIAGRAM (10).json</strong></small>
+        <p><strong>Update diagram dari GitHub?</strong></p>
+        <p>Data diagram saat ini akan <strong>DIGANTIKAN</strong> dengan versi terbaru dari GitHub.<br>Perubahan lokal yang belum disimpan dapat hilang.</p>
+        <dl class="githubUpdateInfo">
+            <dt>Master JSON:</dt>
+            <dd>main/data/HOTEL-NETWORK-DIAGRAM (10).json</dd>
+            <dt>Last uploaded/updated:</dt>
+            <dd id="githubLastUpdated">Retrieving from GitHub...</dd>
+        </dl>
         <div class="modalActions">
             <button id="btnCloseGitHubUpdate" type="button">Cancel</button>
             <button id="btnConfirmGitHubUpdate" type="button">Update</button>
@@ -473,7 +515,7 @@
 
 </div>
 
-<script src="app.js?v=20260903-5"></script>
+<script src="app.js?v=20260903-6"></script>
 </body>
 
 </html>
