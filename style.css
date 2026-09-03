@@ -305,7 +305,14 @@ html,body{background:var(--page-bg);color:var(--text);}
 .githubSaveContent label{display:block;margin:12px 0 6px;}
 .githubSaveContent input{width:100%;height:38px;background:var(--field-bg);color:var(--text);border:1px solid var(--border);}
 .githubSaveContent small{display:block;margin-top:7px;color:var(--muted);line-height:1.4;}
+.githubUpdateInfo{margin:15px 0 0;padding:12px;border:1px solid var(--border);border-radius:6px;background:var(--field-bg);font-size:12px;line-height:1.45;}
+.githubUpdateInfo dt{margin-top:8px;color:var(--muted);font-weight:600;}.githubUpdateInfo dt:first-child{margin-top:0;}
+.githubUpdateInfo dd{margin:2px 0 0;overflow-wrap:anywhere;font-weight:600;}
 .modalActions{display:flex;gap:8px;margin-top:14px;}
+.settingsContent{width:min(92vw,430px);}
+.settingsContent label{display:block;margin:14px 0 6px;}
+.settingsContent select,.settingsContent input[type="number"],.settingsContent input[type="color"]{width:100%;height:40px;padding:5px 9px;background:var(--field-bg);color:var(--text);border:1px solid var(--border);border-radius:5px;}
+.settingsContent small{display:block;margin-top:6px;color:var(--muted);line-height:1.4;}
 #statusDeviceSearch{margin:7px 0 10px;}
 #statusDeviceList{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;max-height:360px;overflow:auto;padding:4px;}
 .statusDeviceOption{display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--border);border-radius:5px;background:var(--field-bg);font-size:12px;cursor:pointer;}
@@ -372,6 +379,11 @@ html,body{background:var(--page-bg);color:var(--text);}
 
 #propertyPanel .secondaryAction{width:100%;margin:9px 0 5px;background:var(--field-bg);color:var(--text);border:1px solid var(--border);}
 #propertyPanel .secondaryAction:hover{border-color:#00aee6;}
+.propertyGroup{margin:14px 0 4px;padding:10px;border:1px solid var(--border);border-radius:6px;}
+.propertyGroup legend{padding:0 5px;color:#00aee6;font-size:13px;font-weight:600;}
+.propertyColumns{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.propertyColumns label{margin-top:0!important;}
+.propertyGroup small{display:block;margin-top:7px;color:var(--muted);line-height:1.35;}
 
 #btnDeleteLink{
 
