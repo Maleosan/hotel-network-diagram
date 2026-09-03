@@ -8,7 +8,7 @@
 
 <title>Hotel Network Diagram</title>
 
-<link rel="stylesheet" href="style.css?v=20260903-1">
+<link rel="stylesheet" href="style.css?v=20260903-2">
 
 </head>
 <body>
@@ -51,6 +51,8 @@
         <button id="btnReset">Reset View</button>
 
         <button id="btnFitView">Fit View</button>
+
+        <button id="btnCheckStatus">Check Status</button>
 
         <button id="btnResetDefault">Reset to Default Diagram</button>
 
@@ -144,6 +146,8 @@
     <g id="nodes"></g>
 
 </g>
+
+<g id="statusSummary"></g>
 
         </svg>
 
@@ -420,6 +424,18 @@
     </div>
 </div>
 
+<div id="statusCheckModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="statusCheckModalTitle">
+    <div class="modalContent statusCheckContent">
+        <h2 id="statusCheckModalTitle">Check Device Status</h2>
+        <label for="statusDeviceSearch">Search Device</label>
+        <input id="statusDeviceSearch" type="search" placeholder="Camera, DVR, PC...">
+        <div id="statusDeviceList"></div>
+        <button id="btnApplyStatusCheck" type="button">Show Result</button>
+        <button id="btnClearStatusCheck" type="button">Clear</button>
+        <button id="btnCloseStatusCheck" type="button">Close</button>
+    </div>
+</div>
+
 <div id="contextMenu" class="contextMenu" role="menu" aria-label="Device actions">
 
     <div id="cmRename" role="menuitem" tabindex="0">Rename</div>
@@ -430,7 +446,7 @@
 
 </div>
 
-<script src="app.js?v=20260903-1"></script>
+<script src="app.js?v=20260903-2"></script>
 </body>
 
 </html>

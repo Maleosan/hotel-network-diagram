@@ -11,6 +11,7 @@ const gridLayer = document.getElementById("gridLayer");
 const nodesLayer = document.getElementById("nodes");
 const linksLayer = document.getElementById("links");
 const annotationsLayer = document.getElementById("annotations");
+const statusSummaryLayer = document.getElementById("statusSummary");
 
 const SVGNS = "http://www.w3.org/2000/svg";
 
@@ -28,6 +29,8 @@ let selectedLink = null;
 let selectedAnnotation = null;
 let pendingAnnotation = null;
 let annotationDrag = null;
+let statusSummaryTypes=[];
+let statusCheckDraft=new Set();
 let linkEditHistoryRecorded = false;
 let selectedWaypointIndex = null;
 let waypointDrag = null;
@@ -368,6 +371,7 @@ function cloneDiagramState(){
         links:links.map(cloneLink),
 
         annotations:annotations.map(annotation=>({...annotation})),
+        statusSummaryTypes:[...statusSummaryTypes],
         diagramName,
         background:{...diagramBackground}
 
@@ -393,6 +397,7 @@ function restoreDiagramState(state,shouldPersist=true){
 
     });
     annotations.splice(0,annotations.length,...(state.annotations||[]).map(annotation=>({...annotation})));
+    statusSummaryTypes=Array.isArray(state.statusSummaryTypes)?state.statusSummaryTypes.filter(type=>DEVICE_TYPES.has(type)):[];
     diagramName=state.diagramName || diagramName;
     diagramBackground={...diagramBackground,...(state.background||{})};
     applyDiagramBackground();
@@ -663,12 +668,29 @@ function render(){
     nodesLayer.innerHTML="";
     linksLayer.innerHTML="";
     annotationsLayer.innerHTML="";
+    renderStatusSummary();
 
     annotations.forEach(drawAnnotation);
     drawLinks();
 
     nodes.forEach(drawNode);
 
+}
+
+function getStatusSummaryLabel(type){
+    if(type==="pc")return "PC";
+    if(type==="camera")return "CAMERA";
+    return getDeviceDefinition(type).label.toUpperCase();
+}
+
+function renderStatusSummary(){
+    statusSummaryLayer.innerHTML="";
+    if(statusSummaryTypes.length===0)return;
+    const width=210,rowHeight=22,height=38+statusSummaryTypes.length*rowHeight,group=document.createElementNS(SVGNS,"g");group.classList.add("deviceStatusSummary");group.style.pointerEvents="none";
+    const background=document.createElementNS(SVGNS,"rect");background.classList.add("summaryBackground");background.setAttribute("x",16);background.setAttribute("y",16);background.setAttribute("width",width);background.setAttribute("height",height);background.setAttribute("rx",8);group.appendChild(background);
+    const title=document.createElementNS(SVGNS,"text");title.classList.add("summaryTitle");title.setAttribute("x",30);title.setAttribute("y",40);title.textContent="DEVICE STATUS";group.appendChild(title);
+    statusSummaryTypes.forEach((type,index)=>{const count=nodes.filter(node=>node.type===type).length,row=document.createElementNS(SVGNS,"text");row.classList.add("summaryRow");row.setAttribute("x",30);row.setAttribute("y",64+index*rowHeight);row.textContent=`${getStatusSummaryLabel(type)} = ${count}`;group.appendChild(row);});
+    statusSummaryLayer.appendChild(group);
 }
 
 function getPortCount(node){
@@ -2169,6 +2191,8 @@ function createLayoutData(){
 
         annotations:annotations.map(annotation=>({...annotation})),
 
+        statusSummaryTypes:[...statusSummaryTypes],
+
         zoom:zoom,
         viewX:viewX,
         viewY:viewY
@@ -2337,6 +2361,7 @@ function loadLayout(data){
         return[];
     });
     annotations.splice(0,annotations.length,...nextAnnotations);
+    statusSummaryTypes=(Array.isArray(layout.statusSummaryTypes)?layout.statusSummaryTypes:[]).filter(type=>DEVICE_TYPES.has(type));
     zoom=Number.isFinite(Number(layout.zoom))?Math.min(4,Math.max(.3,Number(layout.zoom))):1;
     viewX=Number.isFinite(Number(layout.viewX))?Number(layout.viewX):0;
     viewY=Number.isFinite(Number(layout.viewY))?Number(layout.viewY):0;
@@ -2701,6 +2726,14 @@ function initializeDevicePalette(){
     canvas.addEventListener("dragleave",event=>{if(!canvas.contains(event.relatedTarget))clearPaletteDropFeedback();});
     canvas.addEventListener("drop",event=>{const type=event.dataTransfer.getData("text/x-device-type")||draggedPaletteType;if(!DEVICE_TYPES.has(type))return;event.preventDefault();addPaletteDeviceAt(type,event.clientX,event.clientY);draggedPaletteType=null;clearPaletteDropFeedback();});
 }
+
+function renderStatusDeviceOptions(search=""){
+    const list=document.getElementById("statusDeviceList"),query=search.trim().toLowerCase();list.innerHTML="";
+    Object.entries(DEVICE_LIBRARY).sort(([,a],[,b])=>a.label.localeCompare(b.label)).forEach(([type,definition])=>{
+        if(query&&!`${definition.label} ${definition.category}`.toLowerCase().includes(query))return;
+        const label=document.createElement("label");label.className="statusDeviceOption";const checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.value=type;checkbox.checked=statusCheckDraft.has(type);checkbox.addEventListener("change",()=>checkbox.checked?statusCheckDraft.add(type):statusCheckDraft.delete(type));const text=document.createElement("span");text.textContent=`${definition.label} · ${definition.category}`;label.append(checkbox,text);list.appendChild(label);
+    });
+}
 document.getElementById("canvasContainer").addEventListener("click",event=>{
     if(event.target.closest?.(".node,.waypointHandle,.annotation")||event.target.dataset?.linkId) return;
     if(pendingAnnotation){
@@ -2734,6 +2767,7 @@ const btnAddLink=document.getElementById("btnAddLink");
 const btnExportPNG=document.getElementById("btnExportPNG");
 const btnReset=document.getElementById("btnReset");
 const btnFitView=document.getElementById("btnFitView");
+const btnCheckStatus=document.getElementById("btnCheckStatus");
 const btnResetDefault=document.getElementById("btnResetDefault");
 const btnGrid=document.getElementById("btnGrid");
 const btnSnap=document.getElementById("btnSnap");
@@ -2743,6 +2777,8 @@ const btnExportSVG=document.getElementById("btnExportSVG");
 const btnBackground=document.getElementById("btnBackground");
 
 const deviceModal=document.getElementById("deviceModal");
+const statusCheckModal=document.getElementById("statusCheckModal");
+const statusDeviceSearch=document.getElementById("statusDeviceSearch");
 
 const btnCreateDevice=document.getElementById("btnCreateDevice");
 const btnCloseDevice=document.getElementById("btnCloseDevice");
@@ -2759,6 +2795,35 @@ const devicePortCount=document.getElementById("devicePortCount");
 
 const lblModel=document.getElementById("lblModel");
 const lblPortCount=document.getElementById("lblPortCount");
+
+btnCheckStatus.onclick=function(){
+    statusCheckDraft=new Set(statusSummaryTypes);
+    statusDeviceSearch.value="";
+    renderStatusDeviceOptions();
+    statusCheckModal.style.display="flex";
+    statusDeviceSearch.focus();
+};
+statusDeviceSearch.addEventListener("input",()=>renderStatusDeviceOptions(statusDeviceSearch.value));
+document.getElementById("btnApplyStatusCheck").onclick=function(){
+    const nextTypes=[...statusCheckDraft];
+    if(JSON.stringify(nextTypes)!==JSON.stringify(statusSummaryTypes)) recordHistory();
+    statusSummaryTypes=nextTypes;
+    statusCheckModal.style.display="none";
+    render();
+    saveToLocalStorage();
+};
+document.getElementById("btnClearStatusCheck").onclick=function(){
+    if(statusSummaryTypes.length) recordHistory();
+    statusSummaryTypes=[];
+    statusCheckDraft.clear();
+    statusCheckModal.style.display="none";
+    render();
+    saveToLocalStorage();
+};
+document.getElementById("btnCloseStatusCheck").onclick=function(){
+    statusCheckModal.style.display="none";
+    btnCheckStatus.focus();
+};
 deviceType.addEventListener("change", updateDeviceOptions);
 deviceModel.addEventListener("change",syncModelPortOptions);
 deviceCategory.innerHTML='<option value="all">All Categories</option>';
@@ -3106,6 +3171,7 @@ document.addEventListener("keydown",function(e){
         if(pendingAnnotation){pendingAnnotation=null;document.getElementById("statusBar").textContent="Ready";}
         if(deviceModal.style.display==="flex"){deviceModal.style.display="none";btnAddDevice.focus();}
         if(backgroundModal.style.display==="flex"){backgroundModal.style.display="none";btnBackground.focus();}
+        if(statusCheckModal.style.display==="flex"){statusCheckModal.style.display="none";btnCheckStatus.focus();}
         contextMenu.style.display="none";
         if(linkMode) cancelLinkMode();
         return;
