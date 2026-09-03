@@ -722,6 +722,22 @@ function getActivePortCount(node){
     return used.size;
 }
 
+function getConnectedDeviceStatus(node){
+    const remoteIds=new Set();
+    links.forEach(link=>{
+        if(link.from===node.id)remoteIds.add(link.to);
+        if(link.to===node.id)remoteIds.add(link.from);
+    });
+    const connected=[...remoteIds].map(id=>nodes.find(item=>item.id===id)).filter(remote=>remote&&getDeviceDefinition(remote.type).status);
+    const summary={active:0,problem:0,inactive:0,total:connected.length,label:"Device"};
+    connected.forEach(remote=>{const status=["active","problem","inactive"].includes(remote.status)?remote.status:"active";summary[status]++;});
+    const types=new Set(connected.map(remote=>remote.type));
+    if(types.size===1&&types.has("pc"))summary.label="PC";
+    else if(connected.length&&connected.every(remote=>["camera","dome_camera","ptz_camera"].includes(remote.type)))summary.label="Camera";
+    else if(connected.length&&connected.every(remote=>["pc","laptop","thin_client","terminal"].includes(remote.type)))summary.label="Client";
+    return summary;
+}
+
 function drawAnnotation(annotation){
     const group=document.createElementNS(SVGNS,"g");
     group.classList.add("annotation");
@@ -1075,6 +1091,16 @@ if(node.type==="pabx"){
     }
 
     g.appendChild(text);
+
+    if(portCount>1){
+        const health=getConnectedDeviceStatus(node);
+        if(health.total>0){
+            const statusY=84+lines.length*Math.max(14,(Number(node.labelSize)||13)*1.15);
+            const statusText=document.createElementNS(SVGNS,"text");statusText.classList.add("connectionHealthText");statusText.setAttribute("x",45);statusText.setAttribute("y",statusY);statusText.setAttribute("text-anchor","middle");
+            [["activeCount",`${health.label} Active = ${health.active}`],["problemCount",`${health.label} Broken = ${health.problem}`],["inactiveCount",`${health.label} Inactive = ${health.inactive}`]].forEach(([className,value],index)=>{const span=document.createElementNS(SVGNS,"tspan");span.classList.add(className);span.setAttribute("x",45);span.setAttribute("dy",index?"1.25em":"0");span.textContent=value;statusText.appendChild(span);});
+            g.appendChild(statusText);
+        }
+    }
 
     g.addEventListener("pointerdown",startDrag);
 
@@ -2363,7 +2389,9 @@ function getDiagramBounds(){
         minX=Math.min(minX,node.x);
         minY=Math.min(minY,node.y);
         maxX=Math.max(maxX,node.x+NODE_WIDTH);
-        maxY=Math.max(maxY,node.y+NODE_HEIGHT);
+        const hasHealth=getPortCount(node)>1&&getConnectedDeviceStatus(node).total>0;
+        const healthHeight=84+String(node.text||"").split("\n").length*Math.max(14,(Number(node.labelSize)||13)*1.15)+34;
+        maxY=Math.max(maxY,node.y+(hasHealth?healthHeight:NODE_HEIGHT));
 
     });
     annotations.forEach(annotation=>{
@@ -2393,6 +2421,7 @@ function createExportStyles(){
         .linkLabel{fill:${exportTextColor};font-family:Segoe UI,Arial,sans-serif;font-size:12px;text-anchor:middle;paint-order:stroke;stroke:${getEffectiveBackgroundType()==="light"?"#eef3f7":"#202020"};stroke-width:4px;stroke-linejoin:round;}
         .node .statusBadge{stroke:#ffffff;stroke-width:2;}.statusBadge.active{fill:#27ae60;}.statusBadge.inactive{fill:#7f8c8d;}.statusBadge.problem{fill:#e53935;}
         .node .portUsageText{fill:#7ee0ff;font-size:10px;font-weight:600;paint-order:stroke;stroke:#202020;stroke-width:3px;}
+        .node .connectionHealthText{font-size:10px;font-weight:600;paint-order:stroke;stroke:#202020;stroke-width:3px;}.connectionHealthText .activeCount{fill:#27ae60;}.connectionHealthText .problemCount{fill:#ff5252;}.connectionHealthText .inactiveCount{fill:#9aa4ad;}
         .annotationText{fill:#ffffff;font-family:Segoe UI,Arial,sans-serif;font-size:18px;font-weight:600;paint-order:stroke;stroke:#202020;stroke-width:4px;}
     `;
 
