@@ -580,6 +580,11 @@ function normalizeBackground(background){
 
 function getEffectiveBackgroundType(){return !diagramBackground.customized||diagramBackground.type==="theme"?theme:diagramBackground.type;}
 
+function getDiagramContrastColor(){
+    const type=getEffectiveBackgroundType();
+    return type==="light"||(type==="color"&&isLightColor(diagramBackground.color))?"#17202a":"#ffffff";
+}
+
 function applyDiagramBackground(){
     const container=document.getElementById("canvasContainer");
     if(!container) return;
@@ -803,7 +808,7 @@ function drawNode(node){
 
     const icon=document.createElementNS(SVGNS,"g");
 
-    icon.setAttribute("stroke","#ffffff");
+    icon.style.stroke=getDiagramContrastColor();
     icon.setAttribute("stroke-width","2");
     icon.setAttribute("fill","none");
     icon.setAttribute("stroke-linecap","round");
@@ -1014,6 +1019,7 @@ if(node.type==="pabx"){
     //------------------------------------
 
     if(node.iconType!=="custom") drawProfessionalIcon(icon,getNodeIconKey(node));
+    icon.querySelectorAll('[fill="#ffffff"]').forEach(element=>element.style.fill=getDiagramContrastColor());
     g.appendChild(icon);
 
     if(getDeviceDefinition(node.type).status){
@@ -2381,7 +2387,7 @@ function createExportStyles(){
 
     style.textContent=`
         .node rect{fill:#2f3b52;stroke:#5ea8ff;stroke-width:2;rx:8;}
-        .node circle,.deviceIcon{fill:#2f3136;stroke:#00c8ff;stroke-width:2;}
+        .node circle{fill:#2f3136;stroke:#00c8ff;stroke-width:2;}.node .deviceIcon{fill:transparent;}
         .node text{fill:${exportTextColor};font-family:Segoe UI,Arial,sans-serif;font-size:13px;text-anchor:middle;dominant-baseline:middle;user-select:none;pointer-events:none;}
         .link{fill:none;}
         .linkLabel{fill:${exportTextColor};font-family:Segoe UI,Arial,sans-serif;font-size:12px;text-anchor:middle;paint-order:stroke;stroke:${getEffectiveBackgroundType()==="light"?"#eef3f7":"#202020"};stroke-width:4px;stroke-linejoin:round;}
@@ -2982,7 +2988,7 @@ btnAddLink.onclick=function(){
 };
 btnCancelLink.onclick=cancelLinkMode;
 btnExportSVG.onclick=exportSVG;
-btnTheme.onclick=function(){theme=theme==="dark"?"light":"dark";applyTheme();saveToLocalStorage();};
+btnTheme.onclick=function(){theme=theme==="dark"?"light":"dark";applyTheme();render();saveToLocalStorage();};
 
 const diagramNameInput=document.getElementById("diagramName");
 diagramNameInput.addEventListener("change",function(){
@@ -3018,17 +3024,17 @@ btnBackground.onclick=function(){
 document.getElementById("btnCloseBackground").onclick=function(){backgroundModal.style.display="none";btnBackground.focus();};
 backgroundType.addEventListener("change",function(){
     if(this.value==="image"&&!diagramBackground.data){backgroundImageFile.click();return;}
-    recordHistory();diagramBackground.type=this.value;diagramBackground.customized=this.value!=="theme";applyDiagramBackground();saveToLocalStorage();
+    recordHistory();diagramBackground.type=this.value;diagramBackground.customized=this.value!=="theme";applyDiagramBackground();render();saveToLocalStorage();
 });
-backgroundColor.addEventListener("change",function(){recordHistory();diagramBackground={...diagramBackground,type:"color",color:this.value,customized:true};backgroundType.value="color";applyDiagramBackground();saveToLocalStorage();});
+backgroundColor.addEventListener("change",function(){recordHistory();diagramBackground={...diagramBackground,type:"color",color:this.value,customized:true};backgroundType.value="color";applyDiagramBackground();render();saveToLocalStorage();});
 backgroundFit.addEventListener("change",function(){recordHistory();diagramBackground.fit=this.value;applyDiagramBackground();saveToLocalStorage();});
 document.getElementById("btnChooseBackgroundImage").onclick=()=>backgroundImageFile.click();
 backgroundImageFile.addEventListener("change",async function(){
     const file=this.files[0];this.value="";if(!file)return;
-    try{const data=await processImageFile(file,1600,1200,.78);recordHistory();diagramBackground={...diagramBackground,type:"image",data,customized:true};backgroundType.value="image";applyDiagramBackground();saveToLocalStorage();}
+    try{const data=await processImageFile(file,1600,1200,.78);recordHistory();diagramBackground={...diagramBackground,type:"image",data,customized:true};backgroundType.value="image";applyDiagramBackground();render();saveToLocalStorage();}
     catch(error){backgroundType.value=diagramBackground.type;showFeedback(error.message,true);}
 });
-document.getElementById("btnResetBackground").onclick=function(){recordHistory();diagramBackground={type:"theme",color:"#202020",data:"",fit:"cover",customized:false};backgroundType.value="theme";backgroundColor.value="#202020";backgroundFit.value="cover";applyDiagramBackground();saveToLocalStorage();};
+document.getElementById("btnResetBackground").onclick=function(){recordHistory();diagramBackground={type:"theme",color:"#202020",data:"",fit:"cover",customized:false};backgroundType.value="theme";backgroundColor.value="#202020";backgroundFit.value="cover";applyDiagramBackground();render();saveToLocalStorage();};
 
 btnCloseDevice.onclick=function(){
 
