@@ -57,7 +57,7 @@ let gridEnabled = true;
 let snapEnabled = true;
 let diagramName = "HOTEL NETWORK DIAGRAM";
 let theme = "dark";
-let diagramBackground={type:"dark",color:"#202020",data:"",fit:"cover"};
+let diagramBackground={type:"theme",color:"#202020",data:"",fit:"cover",customized:false};
 let pendingDeviceIconData="";
 const DEVICE_LIBRARY={
     router:{category:"Network",label:"Router",icon:"router",ports:5,models:["Generic Router","Branch Router"]},
@@ -573,20 +573,23 @@ function processImageFile(file,maxWidth,maxHeight,quality=.82){
 
 function normalizeBackground(background){
     const value=background&&typeof background==="object"?background:{};
-    const type=["dark","light","color","image","transparent"].includes(value.type)?value.type:"dark";
-    return{type,color:/^#[0-9a-f]{6}$/i.test(value.color)?value.color:"#202020",data:type==="image"&&isSafeImageData(value.data)?value.data:"",fit:["cover","contain","center","repeat"].includes(value.fit)?value.fit:"cover"};
+    const type=["theme","dark","light","color","image","transparent"].includes(value.type)?value.type:"theme";
+    const customized=value.customized===true||["color","image","transparent"].includes(type);
+    return{type:customized?type:"theme",color:/^#[0-9a-f]{6}$/i.test(value.color)?value.color:"#202020",data:type==="image"&&isSafeImageData(value.data)?value.data:"",fit:["cover","contain","center","repeat"].includes(value.fit)?value.fit:"cover",customized};
 }
+
+function getEffectiveBackgroundType(){return !diagramBackground.customized||diagramBackground.type==="theme"?theme:diagramBackground.type;}
 
 function applyDiagramBackground(){
     const container=document.getElementById("canvasContainer");
     if(!container) return;
-    const bg=diagramBackground;
-    container.style.backgroundColor=bg.type==="light"?"#ffffff":bg.type==="dark"?"#202020":bg.type==="color"?bg.color:"transparent";
-    container.style.backgroundImage=bg.type==="image"&&bg.data?`url("${bg.data}")`:"none";
+    const bg=diagramBackground,type=getEffectiveBackgroundType();
+    container.style.backgroundColor=type==="light"?"#eef3f7":type==="dark"?"#202020":type==="color"?bg.color:"transparent";
+    container.style.backgroundImage=type==="image"&&bg.data?`url("${bg.data}")`:"none";
     container.style.backgroundRepeat=bg.fit==="repeat"?"repeat":"no-repeat";
     container.style.backgroundPosition="center";
     container.style.backgroundSize=bg.fit==="center"?"auto":bg.fit==="repeat"?"auto":bg.fit;
-    const light=bg.type==="light"||(bg.type==="color"&&isLightColor(bg.color));
+    const light=type==="light"||(type==="color"&&isLightColor(bg.color));
     document.querySelectorAll("#smallGrid path,#grid path").forEach(path=>path.setAttribute("stroke",light?"#506070":"#ffffff"));
     updateBackgroundPreview();
 }
@@ -599,9 +602,9 @@ function isLightColor(color){
 function updateBackgroundPreview(){
     const preview=document.getElementById("backgroundPreview");
     if(!preview) return;
-    const bg=diagramBackground;
-    preview.style.backgroundColor=bg.type==="light"?"#fff":bg.type==="dark"?"#202020":bg.type==="color"?bg.color:"transparent";
-    preview.style.backgroundImage=bg.type==="image"&&bg.data?`url("${bg.data}")`:"none";
+    const bg=diagramBackground,type=getEffectiveBackgroundType();
+    preview.style.backgroundColor=type==="light"?"#eef3f7":type==="dark"?"#202020":type==="color"?bg.color:"transparent";
+    preview.style.backgroundImage=type==="image"&&bg.data?`url("${bg.data}")`:"none";
     preview.style.backgroundSize=bg.fit==="center"||bg.fit==="repeat"?"auto":bg.fit;
     preview.style.backgroundRepeat=bg.fit==="repeat"?"repeat":"no-repeat";
 }
@@ -641,6 +644,13 @@ function resetView(){
     updateView();
     saveToLocalStorage();
 
+}
+
+function fitView(){
+    const bounds=getDiagramBounds(),rect=svg.getBoundingClientRect();
+    if(!rect.width||!rect.height)return;
+    const padding=30,nextZoom=Math.min(4,Math.max(.3,Math.min((rect.width-padding*2)/bounds.width,(rect.height-padding*2)/bounds.height)));
+    zoom=nextZoom;viewX=rect.width/2-(bounds.x+bounds.width/2)*zoom;viewY=rect.height/2-(bounds.y+bounds.height/2)*zoom;updateView();saveToLocalStorage();showFeedback("Diagram fitted to view");
 }
 
 function render(){
@@ -765,6 +775,7 @@ function drawNode(node){
     const g=document.createElementNS(SVGNS,"g");
 
     g.classList.add("node");
+    if(node.iconType==="custom")g.classList.add("customIconNode");
     g.dataset.id=node.id;
 
     g.setAttribute(
@@ -1026,6 +1037,9 @@ if(node.type==="pabx"){
     text.setAttribute("y",80);
 
     text.setAttribute("text-anchor","middle");
+    text.style.fontSize=`${Math.min(48,Math.max(8,Number(node.labelSize)||13))}px`;
+    if(/^#[0-9a-f]{6}$/i.test(node.labelColor))text.style.fill=node.labelColor;
+    text.style.fontWeight=node.labelBold?"700":"400";
 
     const lines=node.text.split("\n");
 
@@ -1633,6 +1647,11 @@ if(linkMode){
 
     document.getElementById("propName").value=
         selectedNode.text;
+    document.getElementById("propNameSize").value=selectedNode.labelSize||13;
+    document.getElementById("propNameThemeColor").checked=!/^#[0-9a-f]{6}$/i.test(selectedNode.labelColor);
+    document.getElementById("propNameColor").value=/^#[0-9a-f]{6}$/i.test(selectedNode.labelColor)?selectedNode.labelColor:(theme==="light"?"#17202a":"#ffffff");
+    document.getElementById("propNameColor").disabled=document.getElementById("propNameThemeColor").checked;
+    document.getElementById("propNameBold").checked=Boolean(selectedNode.labelBold);
 
     populatePropertyDeviceFields(selectedNode);
 
@@ -1750,6 +1769,9 @@ document
     if(nextNode){
 
         nextNode.text=name;
+        nextNode.labelSize=Math.min(48,Math.max(8,Number(document.getElementById("propNameSize").value)||13));
+        nextNode.labelColor=document.getElementById("propNameThemeColor").checked?null:document.getElementById("propNameColor").value;
+        nextNode.labelBold=document.getElementById("propNameBold").checked;
         nextNode.type=nextType;
         nextNode.ip=ip;
         nextNode.model=nextModel;
@@ -1768,6 +1790,9 @@ document
     }
 
     selectedNode.text=name;
+    selectedNode.labelSize=Math.min(48,Math.max(8,Number(document.getElementById("propNameSize").value)||13));
+    selectedNode.labelColor=document.getElementById("propNameThemeColor").checked?null:document.getElementById("propNameColor").value;
+    selectedNode.labelBold=document.getElementById("propNameBold").checked;
     selectedNode.type=nextType;
 
     selectedNode.ip=
@@ -2084,6 +2109,9 @@ function createLayoutData(){
             id:node.id,
             type:node.type,
             text:node.text,
+            labelSize:Math.min(48,Math.max(8,Number(node.labelSize)||13)),
+            labelColor:/^#[0-9a-f]{6}$/i.test(node.labelColor)?node.labelColor:null,
+            labelBold:Boolean(node.labelBold),
             ip:node.ip || "",
             model:node.model || "",
             portCount:getPortCount(node),
@@ -2229,7 +2257,7 @@ function loadLayout(data){
         const x=Number(n.x), y=Number(n.y);
         if(!Number.isFinite(x)||!Number.isFinite(y)) throw new Error(`Koordinat node ${id} tidak valid`);
         ids.add(id);
-        nextNodes.push({id,type,text:String(n.text||type.toUpperCase()).slice(0,80),ip:String(n.ip||""),
+        nextNodes.push({id,type,text:String(n.text||type.toUpperCase()).slice(0,80),labelSize:Math.min(48,Math.max(8,Number(n.labelSize)||13)),labelColor:/^#[0-9a-f]{6}$/i.test(n.labelColor)?n.labelColor:null,labelBold:Boolean(n.labelBold),ip:String(n.ip||""),
             model:String(n.model||""),portCount:Math.min(512,Math.max(0,Number.isInteger(Number(n.portCount))?Number(n.portCount):(DEFAULT_PORTS[type]||0))),
             location:String(n.location||""),notes:String(n.notes||""),
             iconType:n.iconType==="custom"&&isSafeImageData(n.iconData)?"custom":"default",
@@ -2349,13 +2377,14 @@ function getDiagramBounds(){
 function createExportStyles(){
 
     const style=document.createElementNS(SVGNS,"style");
+    const exportTextColor=getEffectiveBackgroundType()==="light"?"#17202a":"#ffffff";
 
     style.textContent=`
         .node rect{fill:#2f3b52;stroke:#5ea8ff;stroke-width:2;rx:8;}
         .node circle,.deviceIcon{fill:#2f3136;stroke:#00c8ff;stroke-width:2;}
-        .node text{fill:#ffffff;font-family:Segoe UI,Arial,sans-serif;font-size:13px;text-anchor:middle;dominant-baseline:middle;user-select:none;pointer-events:none;}
+        .node text{fill:${exportTextColor};font-family:Segoe UI,Arial,sans-serif;font-size:13px;text-anchor:middle;dominant-baseline:middle;user-select:none;pointer-events:none;}
         .link{fill:none;}
-        .linkLabel{fill:#ffffff;font-family:Segoe UI,Arial,sans-serif;font-size:12px;text-anchor:middle;paint-order:stroke;stroke:#202020;stroke-width:4px;stroke-linejoin:round;}
+        .linkLabel{fill:${exportTextColor};font-family:Segoe UI,Arial,sans-serif;font-size:12px;text-anchor:middle;paint-order:stroke;stroke:${getEffectiveBackgroundType()==="light"?"#eef3f7":"#202020"};stroke-width:4px;stroke-linejoin:round;}
         .node .statusBadge{stroke:#ffffff;stroke-width:2;}.statusBadge.active{fill:#27ae60;}.statusBadge.inactive{fill:#7f8c8d;}.statusBadge.problem{fill:#e53935;}
         .node .portUsageText{fill:#7ee0ff;font-size:10px;font-weight:600;paint-order:stroke;stroke:#202020;stroke-width:3px;}
         .annotationText{fill:#ffffff;font-family:Segoe UI,Arial,sans-serif;font-size:18px;font-weight:600;paint-order:stroke;stroke:#202020;stroke-width:4px;}
@@ -2388,9 +2417,9 @@ function buildExportSVG(){
 }
 
 function appendExportBackground(exportSvg,bounds){
-    const bg=diagramBackground;
-    if(bg.type==="transparent") return;
-    if(bg.type==="image"&&bg.data){
+    const bg=diagramBackground,type=getEffectiveBackgroundType();
+    if(type==="transparent") return;
+    if(type==="image"&&bg.data){
         if(bg.fit==="repeat"){
             const defs=document.createElementNS(SVGNS,"defs"),pattern=document.createElementNS(SVGNS,"pattern"),image=document.createElementNS(SVGNS,"image");
             pattern.id="exportBackgroundPattern";pattern.setAttribute("width",256);pattern.setAttribute("height",256);pattern.setAttribute("patternUnits","userSpaceOnUse");
@@ -2403,7 +2432,7 @@ function appendExportBackground(exportSvg,bounds){
     }
     const rect=document.createElementNS(SVGNS,"rect");
     rect.setAttribute("x",bounds.x);rect.setAttribute("y",bounds.y);rect.setAttribute("width",bounds.width);rect.setAttribute("height",bounds.height);
-    rect.setAttribute("fill",bg.type==="light"?"#ffffff":bg.type==="color"?bg.color:"#202020");exportSvg.appendChild(rect);
+    rect.setAttribute("fill",type==="light"?"#eef3f7":type==="color"?bg.color:"#202020");exportSvg.appendChild(rect);
 }
 
 function downloadBlob(blob,filename){
@@ -2541,7 +2570,7 @@ function createDevice(type,options={},position=getNextDevicePosition()){
     return{
         id:uniqueId(type),type,
         text:options.text||`${definition.label.toUpperCase()}-${String(count).padStart(3,"0")}`,
-        ip:"",model,portCount:capacity,location:"",notes:"",
+        ip:"",model,portCount:capacity,location:"",notes:"",labelSize:13,labelColor:null,labelBold:false,
         iconType:options.iconType==="custom"&&options.iconData?"custom":"default",
         iconData:options.iconType==="custom"?options.iconData||"":"",
         pictureData:"",status:"active",statusNote:"",
@@ -2663,6 +2692,7 @@ const annotationImageFile=document.getElementById("annotationImageFile");
 const btnAddLink=document.getElementById("btnAddLink");
 const btnExportPNG=document.getElementById("btnExportPNG");
 const btnReset=document.getElementById("btnReset");
+const btnFitView=document.getElementById("btnFitView");
 const btnResetDefault=document.getElementById("btnResetDefault");
 const btnGrid=document.getElementById("btnGrid");
 const btnSnap=document.getElementById("btnSnap");
@@ -2736,6 +2766,7 @@ const propAnnotationCropX=document.getElementById("propAnnotationCropX");
 const propAnnotationCropY=document.getElementById("propAnnotationCropY");
 propDeviceType.addEventListener("change",function(){if(selectedNode){populatePropertyDeviceFields(selectedNode,this.value);if(selectedNode.iconType!=="custom")setDefaultIconPreview(document.getElementById("propIconPreview"),{...selectedNode,type:this.value,model:propModel.value});}});
 propModel.addEventListener("change",function(){if(selectedNode){populatePropertyPorts(null,getDeviceDefinition(propDeviceType.value),this.value);if(selectedNode.iconType!=="custom")setDefaultIconPreview(document.getElementById("propIconPreview"),{...selectedNode,type:propDeviceType.value,model:this.value});}});
+document.getElementById("propNameThemeColor").addEventListener("change",function(){document.getElementById("propNameColor").disabled=this.checked;});
 
 document.getElementById("btnUpdateAnnotation").onclick=function(){
     if(!selectedAnnotation)return;
@@ -2914,6 +2945,7 @@ btnReset.onclick=function(){
     resetView();
 
 };
+btnFitView.onclick=fitView;
 btnResetDefault.onclick=function(){
 
     if(confirm("Reset to the built-in default diagram?")){
@@ -2986,17 +3018,17 @@ btnBackground.onclick=function(){
 document.getElementById("btnCloseBackground").onclick=function(){backgroundModal.style.display="none";btnBackground.focus();};
 backgroundType.addEventListener("change",function(){
     if(this.value==="image"&&!diagramBackground.data){backgroundImageFile.click();return;}
-    recordHistory();diagramBackground.type=this.value;applyDiagramBackground();saveToLocalStorage();
+    recordHistory();diagramBackground.type=this.value;diagramBackground.customized=this.value!=="theme";applyDiagramBackground();saveToLocalStorage();
 });
-backgroundColor.addEventListener("change",function(){recordHistory();diagramBackground={...diagramBackground,type:"color",color:this.value};backgroundType.value="color";applyDiagramBackground();saveToLocalStorage();});
+backgroundColor.addEventListener("change",function(){recordHistory();diagramBackground={...diagramBackground,type:"color",color:this.value,customized:true};backgroundType.value="color";applyDiagramBackground();saveToLocalStorage();});
 backgroundFit.addEventListener("change",function(){recordHistory();diagramBackground.fit=this.value;applyDiagramBackground();saveToLocalStorage();});
 document.getElementById("btnChooseBackgroundImage").onclick=()=>backgroundImageFile.click();
 backgroundImageFile.addEventListener("change",async function(){
     const file=this.files[0];this.value="";if(!file)return;
-    try{const data=await processImageFile(file,1600,1200,.78);recordHistory();diagramBackground={...diagramBackground,type:"image",data};backgroundType.value="image";applyDiagramBackground();saveToLocalStorage();}
+    try{const data=await processImageFile(file,1600,1200,.78);recordHistory();diagramBackground={...diagramBackground,type:"image",data,customized:true};backgroundType.value="image";applyDiagramBackground();saveToLocalStorage();}
     catch(error){backgroundType.value=diagramBackground.type;showFeedback(error.message,true);}
 });
-document.getElementById("btnResetBackground").onclick=function(){recordHistory();diagramBackground={type:"dark",color:"#202020",data:"",fit:"cover"};backgroundType.value="dark";backgroundColor.value="#202020";backgroundFit.value="cover";applyDiagramBackground();saveToLocalStorage();};
+document.getElementById("btnResetBackground").onclick=function(){recordHistory();diagramBackground={type:"theme",color:"#202020",data:"",fit:"cover",customized:false};backgroundType.value="theme";backgroundColor.value="#202020";backgroundFit.value="cover";applyDiagramBackground();saveToLocalStorage();};
 
 btnCloseDevice.onclick=function(){
 
