@@ -8,7 +8,7 @@
 
 <title>Hotel Network Diagram</title>
 
-<link rel="stylesheet" href="style.css?v=20260903-3">
+<link rel="stylesheet" href="style.css?v=20260903-4">
 
 </head>
 <body>
@@ -178,6 +178,8 @@
 
             <label class="checkLabel" for="propNameBold"><input id="propNameBold" type="checkbox"> Bold name</label>
 
+            <button id="btnApplyNameStyleAll" class="secondaryAction" type="button">Apply Name Style to All Devices</button>
+
             <label for="propDeviceType">Device Type</label>
 
             <select id="propDeviceType"></select>
@@ -203,6 +205,17 @@
                 </select>
                 <label for="propStatusNote">Status Note</label>
                 <input id="propStatusNote" maxlength="160" placeholder="Optional status information">
+
+                <label for="propStatusTextSize">Status Text Size</label>
+                <input id="propStatusTextSize" type="number" min="8" max="32" step="1">
+
+                <label class="checkLabel" for="propStatusUseDefaultColors"><input id="propStatusUseDefaultColors" type="checkbox" checked> Use Active/Broken/Inactive colors</label>
+                <label for="propStatusTextColor">Status Text Color</label>
+                <input id="propStatusTextColor" type="color" value="#ffffff">
+
+                <label class="checkLabel" for="propStatusTextBold"><input id="propStatusTextBold" type="checkbox" checked> Bold status text</label>
+
+                <button id="btnApplyStatusStyleAll" class="secondaryAction" type="button">Apply Status Text Style to All Devices</button>
             </div>
 
             <label for="propLocation">Location</label>
@@ -464,7 +477,7 @@
 
 </div>
 
-<script src="app.js?v=20260903-3"></script>
+<script src="app.js?v=20260903-4"></script>
 </body>
 
 </html>

@@ -1076,7 +1076,7 @@ if(node.type==="pabx"){
 
     const portCount=getPortCount(node);
     if(portCount>1){
-        const usage=document.createElementNS(SVGNS,"text");usage.classList.add("portUsageText");usage.setAttribute("x",45);usage.setAttribute("y",61);usage.setAttribute("text-anchor","middle");usage.textContent=`${getActivePortCount(node)}/${portCount}`;g.appendChild(usage);
+        const usage=document.createElementNS(SVGNS,"text");usage.classList.add("portUsageText");usage.setAttribute("x",45);usage.setAttribute("y",61);usage.setAttribute("text-anchor","middle");usage.style.fontSize=`${Math.min(32,Math.max(8,Number(node.statusTextSize)||10))}px`;usage.style.fontWeight=node.statusTextBold===false?"400":"600";if(/^#[0-9a-f]{6}$/i.test(node.statusTextColor))usage.style.fill=node.statusTextColor;usage.textContent=`${getActivePortCount(node)}/${portCount}`;g.appendChild(usage);
     }
 
     //------------------------------------
@@ -1124,8 +1124,10 @@ if(node.type==="pabx"){
         const health=getConnectedDeviceStatus(node);
         if(health.total>0){
             const statusY=84+lines.length*Math.max(14,(Number(node.labelSize)||13)*1.15);
-            const statusText=document.createElementNS(SVGNS,"text");statusText.classList.add("connectionHealthText");statusText.setAttribute("x",45);statusText.setAttribute("y",statusY);statusText.setAttribute("text-anchor","middle");
+            const statusText=document.createElementNS(SVGNS,"text");statusText.classList.add("connectionHealthText");statusText.setAttribute("x",45);statusText.setAttribute("y",statusY);statusText.setAttribute("text-anchor","middle");statusText.style.fontSize=`${Math.min(32,Math.max(8,Number(node.statusTextSize)||10))}px`;statusText.style.fontWeight=node.statusTextBold===false?"400":"600";
+            if(/^#[0-9a-f]{6}$/i.test(node.statusTextColor))statusText.style.fill=node.statusTextColor;
             [["activeCount",`${health.label} Active = ${health.active}`],["problemCount",`${health.label} Broken = ${health.problem}`],["inactiveCount",`${health.label} Inactive = ${health.inactive}`]].forEach(([className,value],index)=>{const span=document.createElementNS(SVGNS,"tspan");span.classList.add(className);span.setAttribute("x",45);span.setAttribute("dy",index?"1.25em":"0");span.textContent=value;statusText.appendChild(span);});
+            if(/^#[0-9a-f]{6}$/i.test(node.statusTextColor))statusText.querySelectorAll("tspan").forEach(span=>span.style.fill=node.statusTextColor);
             g.appendChild(statusText);
         }
     }
@@ -1728,6 +1730,11 @@ if(linkMode){
 
     document.getElementById("propStatus").value=["active","inactive","problem"].includes(selectedNode.status)?selectedNode.status:"active";
     document.getElementById("propStatusNote").value=selectedNode.statusNote||"";
+    document.getElementById("propStatusTextSize").value=Math.min(32,Math.max(8,Number(selectedNode.statusTextSize)||10));
+    document.getElementById("propStatusUseDefaultColors").checked=!/^#[0-9a-f]{6}$/i.test(selectedNode.statusTextColor);
+    document.getElementById("propStatusTextColor").value=/^#[0-9a-f]{6}$/i.test(selectedNode.statusTextColor)?selectedNode.statusTextColor:"#ffffff";
+    document.getElementById("propStatusTextColor").disabled=document.getElementById("propStatusUseDefaultColors").checked;
+    document.getElementById("propStatusTextBold").checked=selectedNode.statusTextBold!==false;
 
     updateNodeMediaPreviews();
 
@@ -1840,6 +1847,9 @@ document
         nextNode.notes=document.getElementById("propNotes").value;
         nextNode.status=document.getElementById("propStatus").value;
         nextNode.statusNote=document.getElementById("propStatusNote").value.trim().slice(0,160);
+        nextNode.statusTextSize=Math.min(32,Math.max(8,Number(document.getElementById("propStatusTextSize").value)||10));
+        nextNode.statusTextColor=document.getElementById("propStatusUseDefaultColors").checked?null:document.getElementById("propStatusTextColor").value;
+        nextNode.statusTextBold=document.getElementById("propStatusTextBold").checked;
 
     }
 
@@ -1870,6 +1880,9 @@ document
 
     selectedNode.status=document.getElementById("propStatus").value;
     selectedNode.statusNote=document.getElementById("propStatusNote").value.trim().slice(0,160);
+    selectedNode.statusTextSize=Math.min(32,Math.max(8,Number(document.getElementById("propStatusTextSize").value)||10));
+    selectedNode.statusTextColor=document.getElementById("propStatusUseDefaultColors").checked?null:document.getElementById("propStatusTextColor").value;
+    selectedNode.statusTextBold=document.getElementById("propStatusTextBold").checked;
 
     render();
     saveToLocalStorage();
@@ -2172,6 +2185,9 @@ function createLayoutData(){
             labelSize:Math.min(48,Math.max(8,Number(node.labelSize)||13)),
             labelColor:/^#[0-9a-f]{6}$/i.test(node.labelColor)?node.labelColor:null,
             labelBold:Boolean(node.labelBold),
+            statusTextSize:Math.min(32,Math.max(8,Number(node.statusTextSize)||10)),
+            statusTextColor:/^#[0-9a-f]{6}$/i.test(node.statusTextColor)?node.statusTextColor:null,
+            statusTextBold:node.statusTextBold!==false,
             ip:node.ip || "",
             model:node.model || "",
             portCount:getPortCount(node),
@@ -2368,7 +2384,7 @@ function loadLayout(data){
         const x=Number(n.x), y=Number(n.y);
         if(!Number.isFinite(x)||!Number.isFinite(y)) throw new Error(`Koordinat node ${id} tidak valid`);
         ids.add(id);
-        nextNodes.push({id,type,text:String(n.text||type.toUpperCase()).slice(0,80),labelSize:Math.min(48,Math.max(8,Number(n.labelSize)||13)),labelColor:/^#[0-9a-f]{6}$/i.test(n.labelColor)?n.labelColor:null,labelBold:Boolean(n.labelBold),ip:String(n.ip||""),
+        nextNodes.push({id,type,text:String(n.text||type.toUpperCase()).slice(0,80),labelSize:Math.min(48,Math.max(8,Number(n.labelSize)||13)),labelColor:/^#[0-9a-f]{6}$/i.test(n.labelColor)?n.labelColor:null,labelBold:Boolean(n.labelBold),statusTextSize:Math.min(32,Math.max(8,Number(n.statusTextSize)||10)),statusTextColor:/^#[0-9a-f]{6}$/i.test(n.statusTextColor)?n.statusTextColor:null,statusTextBold:n.statusTextBold!==false,ip:String(n.ip||""),
             model:String(n.model||""),portCount:Math.min(512,Math.max(0,Number.isInteger(Number(n.portCount))?Number(n.portCount):(DEFAULT_PORTS[type]||0))),
             location:String(n.location||""),notes:String(n.notes||""),
             iconType:n.iconType==="custom"&&isSafeImageData(n.iconData)?"custom":"default",
@@ -2470,7 +2486,7 @@ function getDiagramBounds(){
         minY=Math.min(minY,node.y);
         maxX=Math.max(maxX,node.x+NODE_WIDTH);
         const hasHealth=getPortCount(node)>1&&getConnectedDeviceStatus(node).total>0;
-        const healthHeight=84+String(node.text||"").split("\n").length*Math.max(14,(Number(node.labelSize)||13)*1.15)+34;
+        const healthHeight=84+String(node.text||"").split("\n").length*Math.max(14,(Number(node.labelSize)||13)*1.15)+Math.max(34,(Number(node.statusTextSize)||10)*4);
         maxY=Math.max(maxY,node.y+(hasHealth?healthHeight:NODE_HEIGHT));
 
     });
@@ -2685,7 +2701,7 @@ function createDevice(type,options={},position=getNextDevicePosition()){
     return{
         id:uniqueId(type),type,
         text:options.text||`${definition.label.toUpperCase()}-${String(count).padStart(3,"0")}`,
-        ip:"",model,portCount:capacity,location:"",notes:"",labelSize:13,labelColor:null,labelBold:false,
+        ip:"",model,portCount:capacity,location:"",notes:"",labelSize:13,labelColor:null,labelBold:false,statusTextSize:10,statusTextColor:null,statusTextBold:true,
         iconType:options.iconType==="custom"&&options.iconData?"custom":"default",
         iconData:options.iconType==="custom"?options.iconData||"":"",
         pictureData:"",status:"active",statusNote:"",
@@ -2955,6 +2971,21 @@ const propAnnotationCropY=document.getElementById("propAnnotationCropY");
 propDeviceType.addEventListener("change",function(){if(selectedNode){populatePropertyDeviceFields(selectedNode,this.value);if(selectedNode.iconType!=="custom")setDefaultIconPreview(document.getElementById("propIconPreview"),{...selectedNode,type:this.value,model:propModel.value});}});
 propModel.addEventListener("change",function(){if(selectedNode){populatePropertyPorts(null,getDeviceDefinition(propDeviceType.value),this.value);if(selectedNode.iconType!=="custom")setDefaultIconPreview(document.getElementById("propIconPreview"),{...selectedNode,type:propDeviceType.value,model:this.value});}});
 document.getElementById("propNameThemeColor").addEventListener("change",function(){document.getElementById("propNameColor").disabled=this.checked;});
+document.getElementById("propStatusUseDefaultColors").addEventListener("change",function(){document.getElementById("propStatusTextColor").disabled=this.checked;});
+
+document.getElementById("btnApplyNameStyleAll").onclick=function(){
+    if(!selectedNode||nodes.length===0)return;
+    const style={labelSize:Math.min(48,Math.max(8,Number(document.getElementById("propNameSize").value)||13)),labelColor:document.getElementById("propNameThemeColor").checked?null:document.getElementById("propNameColor").value,labelBold:document.getElementById("propNameBold").checked};
+    if(nodes.every(node=>node.labelSize===style.labelSize&&node.labelColor===style.labelColor&&node.labelBold===style.labelBold)){showFeedback("Name style already applied to all devices.",false);return;}
+    const selectedId=selectedNode.id;recordHistory();nodes.forEach(node=>Object.assign(node,style));render();selectNodeById(selectedId);saveToLocalStorage();showFeedback("Name style applied to all devices.",false);
+};
+
+document.getElementById("btnApplyStatusStyleAll").onclick=function(){
+    if(!selectedNode||nodes.length===0)return;
+    const style={statusTextSize:Math.min(32,Math.max(8,Number(document.getElementById("propStatusTextSize").value)||10)),statusTextColor:document.getElementById("propStatusUseDefaultColors").checked?null:document.getElementById("propStatusTextColor").value,statusTextBold:document.getElementById("propStatusTextBold").checked};
+    if(nodes.every(node=>(Number(node.statusTextSize)||10)===style.statusTextSize&&(node.statusTextColor||null)===style.statusTextColor&&(node.statusTextBold!==false)===style.statusTextBold)){showFeedback("Status text style already applied to all devices.",false);return;}
+    const selectedId=selectedNode.id;recordHistory();nodes.forEach(node=>Object.assign(node,style));render();selectNodeById(selectedId);saveToLocalStorage();showFeedback("Status text style applied to all devices.",false);
+};
 
 document.getElementById("btnUpdateAnnotation").onclick=function(){
     if(!selectedAnnotation)return;

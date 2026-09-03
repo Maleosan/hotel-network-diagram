@@ -370,6 +370,9 @@ html,body{background:var(--page-bg);color:var(--text);}
 
 }
 
+#propertyPanel .secondaryAction{width:100%;margin:9px 0 5px;background:var(--field-bg);color:var(--text);border:1px solid var(--border);}
+#propertyPanel .secondaryAction:hover{border-color:#00aee6;}
+
 #btnDeleteLink{
 
     width:100%;
