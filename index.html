@@ -8,7 +8,7 @@
 
 <title>Hotel Network Diagram</title>
 
-<link rel="stylesheet" href="style.css?v=20260903-4">
+<link rel="stylesheet" href="style.css?v=20260903-5">
 
 </head>
 <body>
@@ -24,13 +24,11 @@
 
     <div class="tools">
 
-        <button id="btnOpen">Open</button>
+        <button id="btnOpen">📂 Load JSON</button>
 
-<button id="btnSave">Save</button>
+<button id="btnSave">💾 Save JSON</button>
 
-        <button id="btnSaveMain">Save JSON to Main</button>
-
-        <button id="btnOpenMain">Open JSON from Main</button>
+        <button id="btnOpenMain">🔄 Update from GitHub</button>
 
 <button id="btnUndo" disabled>Undo</button>
 
@@ -453,16 +451,14 @@
     </div>
 </div>
 
-<div id="githubSaveModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="githubSaveModalTitle">
+<div id="githubUpdateModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="githubUpdateModalTitle">
     <div class="modalContent githubSaveContent">
-        <h2 id="githubSaveModalTitle">Save JSON to Main</h2>
-        <p>Publishes the current diagram as <strong>shared-diagram.json</strong> on branch <strong>main</strong>.</p>
-        <label for="githubToken">GitHub fine-grained token</label>
-        <input id="githubToken" type="password" autocomplete="off" placeholder="Token with Contents: Read and write">
-        <small>The token is used only for this request and is not saved in the browser.</small>
+        <h2 id="githubUpdateModalTitle">Update from GitHub</h2>
+        <p>Update diagram dari GitHub?<br>Data diagram saat ini akan digantikan dengan versi terbaru dari GitHub.</p>
+        <small>Master JSON: <strong>main/data/HOTEL-NETWORK-DIAGRAM (10).json</strong></small>
         <div class="modalActions">
-            <button id="btnConfirmSaveMain" type="button">Publish</button>
-            <button id="btnCloseSaveMain" type="button">Cancel</button>
+            <button id="btnCloseGitHubUpdate" type="button">Cancel</button>
+            <button id="btnConfirmGitHubUpdate" type="button">Update</button>
         </div>
     </div>
 </div>
@@ -477,7 +473,7 @@
 
 </div>
 
-<script src="app.js?v=20260903-4"></script>
+<script src="app.js?v=20260903-5"></script>
 </body>
 
 </html>
