@@ -580,10 +580,11 @@ body.lightTheme #routeControls small{color:#52606d;}
 
 }
 .deviceIcon{
-    fill:var(--node-fill);
+    fill:transparent;
     stroke:var(--node-stroke);
     stroke-width:2;
 }
+.node .deviceIcon{fill:transparent;}
 
 .node text{
     fill:white;
