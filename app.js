@@ -2207,6 +2207,55 @@ function createLayoutData(){
 }
 
 const LOCAL_STORAGE_KEY="hotelNetworkDiagram.latest";
+const SHARED_DIAGRAM_REPOSITORY="Maleosan/hotel-network-diagram";
+const SHARED_DIAGRAM_BRANCH="main";
+const SHARED_DIAGRAM_PATH="shared-diagram.json";
+
+function encodeBase64Utf8(value){
+    const bytes=new TextEncoder().encode(value);
+    let binary="";
+    for(let offset=0;offset<bytes.length;offset+=0x8000){
+        binary+=String.fromCharCode(...bytes.subarray(offset,offset+0x8000));
+    }
+    return btoa(binary);
+}
+
+async function publishLayoutToMain(token){
+    const apiUrl=`https://api.github.com/repos/${SHARED_DIAGRAM_REPOSITORY}/contents/${SHARED_DIAGRAM_PATH}`;
+    const headers={
+        Accept:"application/vnd.github+json",
+        Authorization:`Bearer ${token}`,
+        "X-GitHub-Api-Version":"2022-11-28"
+    };
+    const currentResponse=await fetch(`${apiUrl}?ref=${encodeURIComponent(SHARED_DIAGRAM_BRANCH)}`,{headers,cache:"no-store"});
+    let currentSha=null;
+    if(currentResponse.ok){
+        const current=await currentResponse.json();
+        currentSha=current.sha;
+    }else if(currentResponse.status!==404){
+        const error=await currentResponse.json().catch(()=>({}));
+        throw new Error(error.message||`GitHub request failed (${currentResponse.status})`);
+    }
+    const content=JSON.stringify(createLayoutData(),null,4);
+    if(new Blob([content]).size>950000) throw new Error("JSON terlalu besar untuk dipublish langsung. Kurangi ukuran gambar pada diagram.");
+    const body={message:"Update shared network diagram",content:encodeBase64Utf8(content),branch:SHARED_DIAGRAM_BRANCH};
+    if(currentSha) body.sha=currentSha;
+    const response=await fetch(apiUrl,{method:"PUT",headers:{...headers,"Content-Type":"application/json"},body:JSON.stringify(body)});
+    if(!response.ok){
+        const error=await response.json().catch(()=>({}));
+        throw new Error(error.message||`GitHub publish failed (${response.status})`);
+    }
+}
+
+async function openLayoutFromMain(){
+    const rawUrl=`https://raw.githubusercontent.com/${SHARED_DIAGRAM_REPOSITORY}/${SHARED_DIAGRAM_BRANCH}/${SHARED_DIAGRAM_PATH}?t=${Date.now()}`;
+    const response=await fetch(rawUrl,{cache:"no-store"});
+    if(!response.ok) throw new Error(response.status===404?"Belum ada shared-diagram.json di branch main.":`Gagal membuka JSON (${response.status})`);
+    loadLayout(await response.text());
+    render();
+    updateView();
+    saveToLocalStorage();
+}
 
 function saveToLocalStorage(){
 
@@ -2755,6 +2804,8 @@ applyDiagramBackground();
 
 const btnOpen=document.getElementById("btnOpen");
 const btnSave=document.getElementById("btnSave");
+const btnSaveMain=document.getElementById("btnSaveMain");
+const btnOpenMain=document.getElementById("btnOpenMain");
 const btnUndo=document.getElementById("btnUndo");
 const btnRedo=document.getElementById("btnRedo");
 const fileOpen=document.getElementById("fileOpen");
@@ -2779,6 +2830,8 @@ const btnBackground=document.getElementById("btnBackground");
 const deviceModal=document.getElementById("deviceModal");
 const statusCheckModal=document.getElementById("statusCheckModal");
 const statusDeviceSearch=document.getElementById("statusDeviceSearch");
+const githubSaveModal=document.getElementById("githubSaveModal");
+const githubToken=document.getElementById("githubToken");
 
 const btnCreateDevice=document.getElementById("btnCreateDevice");
 const btnCloseDevice=document.getElementById("btnCloseDevice");
@@ -2802,6 +2855,35 @@ btnCheckStatus.onclick=function(){
     renderStatusDeviceOptions();
     statusCheckModal.style.display="flex";
     statusDeviceSearch.focus();
+};
+btnSaveMain.onclick=function(){
+    githubToken.value="";
+    githubSaveModal.style.display="flex";
+    githubToken.focus();
+};
+document.getElementById("btnCloseSaveMain").onclick=function(){
+    githubToken.value="";
+    githubSaveModal.style.display="none";
+    btnSaveMain.focus();
+};
+document.getElementById("btnConfirmSaveMain").onclick=async function(){
+    const token=githubToken.value.trim();
+    if(!token){showFeedback("Masukkan GitHub token terlebih dahulu.",true);githubToken.focus();return;}
+    const button=this;
+    button.disabled=true;
+    try{
+        await publishLayoutToMain(token);
+        githubToken.value="";
+        githubSaveModal.style.display="none";
+        showFeedback("JSON berhasil dipublish ke branch main.",false);
+    }catch(error){showFeedback(error.message,true);}
+    finally{button.disabled=false;}
+};
+btnOpenMain.onclick=async function(){
+    btnOpenMain.disabled=true;
+    try{await openLayoutFromMain();showFeedback("JSON dari branch main berhasil dibuka.",false);}
+    catch(error){showFeedback(error.message,true);}
+    finally{btnOpenMain.disabled=false;}
 };
 statusDeviceSearch.addEventListener("input",()=>renderStatusDeviceOptions(statusDeviceSearch.value));
 document.getElementById("btnApplyStatusCheck").onclick=function(){
@@ -3172,6 +3254,7 @@ document.addEventListener("keydown",function(e){
         if(deviceModal.style.display==="flex"){deviceModal.style.display="none";btnAddDevice.focus();}
         if(backgroundModal.style.display==="flex"){backgroundModal.style.display="none";btnBackground.focus();}
         if(statusCheckModal.style.display==="flex"){statusCheckModal.style.display="none";btnCheckStatus.focus();}
+        if(githubSaveModal.style.display==="flex"){githubToken.value="";githubSaveModal.style.display="none";btnSaveMain.focus();}
         contextMenu.style.display="none";
         if(linkMode) cancelLinkMode();
         return;

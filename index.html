@@ -8,7 +8,7 @@
 
 <title>Hotel Network Diagram</title>
 
-<link rel="stylesheet" href="style.css?v=20260903-2">
+<link rel="stylesheet" href="style.css?v=20260903-3">
 
 </head>
 <body>
@@ -27,6 +27,10 @@
         <button id="btnOpen">Open</button>
 
 <button id="btnSave">Save</button>
+
+        <button id="btnSaveMain">Save JSON to Main</button>
+
+        <button id="btnOpenMain">Open JSON from Main</button>
 
 <button id="btnUndo" disabled>Undo</button>
 
@@ -436,6 +440,20 @@
     </div>
 </div>
 
+<div id="githubSaveModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="githubSaveModalTitle">
+    <div class="modalContent githubSaveContent">
+        <h2 id="githubSaveModalTitle">Save JSON to Main</h2>
+        <p>Publishes the current diagram as <strong>shared-diagram.json</strong> on branch <strong>main</strong>.</p>
+        <label for="githubToken">GitHub fine-grained token</label>
+        <input id="githubToken" type="password" autocomplete="off" placeholder="Token with Contents: Read and write">
+        <small>The token is used only for this request and is not saved in the browser.</small>
+        <div class="modalActions">
+            <button id="btnConfirmSaveMain" type="button">Publish</button>
+            <button id="btnCloseSaveMain" type="button">Cancel</button>
+        </div>
+    </div>
+</div>
+
 <div id="contextMenu" class="contextMenu" role="menu" aria-label="Device actions">
 
     <div id="cmRename" role="menuitem" tabindex="0">Rename</div>
@@ -446,7 +464,7 @@
 
 </div>
 
-<script src="app.js?v=20260903-2"></script>
+<script src="app.js?v=20260903-3"></script>
 </body>
 
 </html>
