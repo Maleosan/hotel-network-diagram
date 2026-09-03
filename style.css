@@ -474,6 +474,8 @@ html,body{background:var(--page-bg);color:var(--text);}
 
 .node .statusBadge{stroke:#ffffff;stroke-width:2;vector-effect:non-scaling-stroke;}
 .node .portUsageText{fill:#7ee0ff;font-size:10px;font-weight:600;paint-order:stroke;stroke:var(--canvas-bg);stroke-width:3px;}
+.node .connectionHealthText{font-size:10px;font-weight:600;paint-order:stroke;stroke:var(--canvas-bg);stroke-width:3px;}
+.connectionHealthText .activeCount{fill:#27ae60;}.connectionHealthText .problemCount{fill:#ff5252;}.connectionHealthText .inactiveCount{fill:#9aa4ad;}
 .customIconNode:not(.selected) .deviceIcon{fill:transparent;stroke:transparent;}
 .statusBadge.active{fill:#27ae60;}
 .statusBadge.inactive{fill:#7f8c8d;}
