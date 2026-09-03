@@ -54,6 +54,10 @@ let viewX=0;
 let viewY=0;
 const NODE_WIDTH = 90;
 const NODE_HEIGHT = 90;
+const MIN_NODE_WIDTH = 50;
+const MAX_NODE_WIDTH = 400;
+const MIN_NODE_HEIGHT = 50;
+const MAX_NODE_HEIGHT = 300;
 const GRID_SIZE = 20;
 
 let gridEnabled = true;
@@ -61,6 +65,9 @@ let snapEnabled = true;
 let diagramName = "HOTEL NETWORK DIAGRAM";
 let theme = "dark";
 let diagramBackground={type:"theme",color:"#202020",data:"",fit:"cover",customized:false};
+let globalDeviceScale=1;
+let defaultDeviceNameColor=null;
+let globalStatusTextSize=10;
 let pendingDeviceIconData="";
 const DEVICE_LIBRARY={
     router:{category:"Network",label:"Router",icon:"router",ports:5,models:["Generic Router","Branch Router"]},
@@ -143,6 +150,17 @@ const DEFAULT_PORTS=Object.fromEntries(Object.entries(DEVICE_LIBRARY).map(([id,i
 function uniqueId(prefix){
     return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
 }
+
+function clampNodeWidth(value){return Math.min(MAX_NODE_WIDTH,Math.max(MIN_NODE_WIDTH,Number(value)||NODE_WIDTH));}
+function clampNodeHeight(value){return Math.min(MAX_NODE_HEIGHT,Math.max(MIN_NODE_HEIGHT,Number(value)||NODE_HEIGHT));}
+function clampGlobalDeviceScale(value){return Math.min(2,Math.max(.5,Number(value)||1));}
+function clampStatusTextSize(value){return Math.min(32,Math.max(8,Number(value)||10));}
+function getNodeBaseSize(node){return{width:clampNodeWidth(node?.width),height:clampNodeHeight(node?.height)};}
+function getNodeScale(node){const size=getNodeBaseSize(node),globalScale=clampGlobalDeviceScale(globalDeviceScale);return{x:(size.width/NODE_WIDTH)*globalScale,y:(size.height/NODE_HEIGHT)*globalScale};}
+function getNodeDisplaySize(node){const size=getNodeBaseSize(node),scale=clampGlobalDeviceScale(globalDeviceScale);return{width:size.width*scale,height:size.height*scale};}
+function getNodeTransform(node){return `translate(${node.x},${node.y})`;}
+function getEffectiveDeviceNameColor(node){return /^#[0-9a-f]{6}$/i.test(node?.labelColor)?node.labelColor:(/^#[0-9a-f]{6}$/i.test(defaultDeviceNameColor)?defaultDeviceNameColor:null);}
+function getEffectiveStatusTextSize(node){return node?.statusTextUseGlobal===false?clampStatusTextSize(node.statusTextSize):clampStatusTextSize(globalStatusTextSize);}
 
 /* ==========================================================
    DATA
@@ -373,7 +391,10 @@ function cloneDiagramState(){
         annotations:annotations.map(annotation=>({...annotation})),
         statusSummaryTypes:[...statusSummaryTypes],
         diagramName,
-        background:{...diagramBackground}
+        background:{...diagramBackground},
+        globalDeviceScale,
+        defaultDeviceNameColor,
+        globalStatusTextSize
 
     };
 
@@ -400,6 +421,9 @@ function restoreDiagramState(state,shouldPersist=true){
     statusSummaryTypes=Array.isArray(state.statusSummaryTypes)?state.statusSummaryTypes.filter(type=>DEVICE_TYPES.has(type)):[];
     diagramName=state.diagramName || diagramName;
     diagramBackground={...diagramBackground,...(state.background||{})};
+    globalDeviceScale=clampGlobalDeviceScale(state.globalDeviceScale);
+    defaultDeviceNameColor=/^#[0-9a-f]{6}$/i.test(state.defaultDeviceNameColor)?state.defaultDeviceNameColor:null;
+    globalStatusTextSize=clampStatusTextSize(state.globalStatusTextSize);
     applyDiagramBackground();
     document.getElementById("diagramName").value=diagramName;
 
@@ -826,11 +850,26 @@ function drawNode(node){
     g.classList.add("node");
     if(node.iconType==="custom")g.classList.add("customIconNode");
     g.dataset.id=node.id;
+    const displaySize=getNodeDisplaySize(node);
+    const nodeScale=getNodeScale(node);
+    g.dataset.displayWidth=String(displaySize.width);
+    g.dataset.displayHeight=String(displaySize.height);
 
     g.setAttribute(
         "transform",
-        `translate(${node.x},${node.y})`
+        getNodeTransform(node)
     );
+
+    const hitbox=document.createElementNS(SVGNS,"rect");
+    hitbox.classList.add("nodeHitbox");
+    hitbox.setAttribute("x",0);hitbox.setAttribute("y",0);hitbox.setAttribute("width",displaySize.width);hitbox.setAttribute("height",displaySize.height);
+    hitbox.style.fill="transparent";hitbox.style.stroke="none";hitbox.style.pointerEvents="all";
+    g.appendChild(hitbox);
+
+    const visual=document.createElementNS(SVGNS,"g");
+    visual.classList.add("deviceVisual");
+    visual.setAttribute("transform",`scale(${nodeScale.x},${nodeScale.y})`);
+    g.appendChild(visual);
 
     //------------------------------------
     // Background
@@ -844,7 +883,7 @@ function drawNode(node){
 
     circle.setAttribute("class","deviceIcon");
 
-    g.appendChild(circle);
+    visual.appendChild(circle);
 
     //------------------------------------
     // ICON GROUP
@@ -865,7 +904,7 @@ function drawNode(node){
         customIcon.setAttribute("preserveAspectRatio","xMidYMid meet");
         customIcon.setAttribute("href",node.iconData);
         customIcon.style.pointerEvents="none";
-        g.appendChild(customIcon);
+        visual.appendChild(customIcon);
         icon.style.display="none";
     }
 
@@ -1064,31 +1103,32 @@ if(node.type==="pabx"){
 
     if(node.iconType!=="custom") drawProfessionalIcon(icon,getNodeIconKey(node));
     icon.querySelectorAll('[fill="#ffffff"]').forEach(element=>element.style.fill=getDiagramContrastColor());
-    g.appendChild(icon);
+    visual.appendChild(icon);
 
     if(getDeviceDefinition(node.type).status){
         const badge=document.createElementNS(SVGNS,"circle");
         const status=["active","inactive","problem"].includes(node.status)?node.status:"active";
         badge.setAttribute("cx",68);badge.setAttribute("cy",12);badge.setAttribute("r",6);
         badge.classList.add("statusBadge",status);badge.style.pointerEvents="none";
-        const title=document.createElementNS(SVGNS,"title");title.textContent=`${status}${node.statusNote?`: ${node.statusNote}`:""}`;badge.appendChild(title);g.appendChild(badge);
+        const title=document.createElementNS(SVGNS,"title");title.textContent=`${status}${node.statusNote?`: ${node.statusNote}`:""}`;badge.appendChild(title);visual.appendChild(badge);
     }
 
     const portCount=getPortCount(node);
     if(portCount>1){
-        const usage=document.createElementNS(SVGNS,"text");usage.classList.add("portUsageText");usage.setAttribute("x",45);usage.setAttribute("y",61);usage.setAttribute("text-anchor","middle");usage.style.fontSize=`${Math.min(32,Math.max(8,Number(node.statusTextSize)||10))}px`;usage.style.fontWeight=node.statusTextBold===false?"400":"600";if(/^#[0-9a-f]{6}$/i.test(node.statusTextColor))usage.style.fill=node.statusTextColor;usage.textContent=`${getActivePortCount(node)}/${portCount}`;g.appendChild(usage);
+        const usage=document.createElementNS(SVGNS,"text");usage.classList.add("portUsageText");usage.setAttribute("x",displaySize.width/2);usage.setAttribute("y",61*nodeScale.y);usage.setAttribute("text-anchor","middle");usage.style.fontSize=`${getEffectiveStatusTextSize(node)}px`;usage.style.fontWeight=node.statusTextBold===false?"400":"600";if(/^#[0-9a-f]{6}$/i.test(node.statusTextColor))usage.style.fill=node.statusTextColor;usage.textContent=`${getActivePortCount(node)}/${portCount}`;g.appendChild(usage);
     }
 
     //------------------------------------
 
     const text=document.createElementNS(SVGNS,"text");
 
-    text.setAttribute("x",45);
-    text.setAttribute("y",80);
+    text.setAttribute("x",displaySize.width/2);
+    text.setAttribute("y",80*nodeScale.y);
 
     text.setAttribute("text-anchor","middle");
     text.style.fontSize=`${Math.min(48,Math.max(8,Number(node.labelSize)||13))}px`;
-    if(/^#[0-9a-f]{6}$/i.test(node.labelColor))text.style.fill=node.labelColor;
+    const effectiveNameColor=getEffectiveDeviceNameColor(node);
+    if(effectiveNameColor)text.style.fill=effectiveNameColor;
     text.style.fontWeight=node.labelBold?"700":"400";
 
     const lines=node.text.split("\n");
@@ -1103,7 +1143,7 @@ if(node.type==="pabx"){
 
             const t=document.createElementNS(SVGNS,"tspan");
 
-            t.setAttribute("x",45);
+            t.setAttribute("x",displaySize.width/2);
 
             t.setAttribute(
                 "dy",
@@ -1124,9 +1164,9 @@ if(node.type==="pabx"){
         const health=getConnectedDeviceStatus(node);
         if(health.total>0){
             const statusY=84+lines.length*Math.max(14,(Number(node.labelSize)||13)*1.15);
-            const statusText=document.createElementNS(SVGNS,"text");statusText.classList.add("connectionHealthText");statusText.setAttribute("x",45);statusText.setAttribute("y",statusY);statusText.setAttribute("text-anchor","middle");statusText.style.fontSize=`${Math.min(32,Math.max(8,Number(node.statusTextSize)||10))}px`;statusText.style.fontWeight=node.statusTextBold===false?"400":"600";
+            const statusText=document.createElementNS(SVGNS,"text");statusText.classList.add("connectionHealthText");statusText.setAttribute("x",displaySize.width/2);statusText.setAttribute("y",statusY*nodeScale.y);statusText.setAttribute("text-anchor","middle");statusText.style.fontSize=`${getEffectiveStatusTextSize(node)}px`;statusText.style.fontWeight=node.statusTextBold===false?"400":"600";
             if(/^#[0-9a-f]{6}$/i.test(node.statusTextColor))statusText.style.fill=node.statusTextColor;
-            [["activeCount",`${health.label} Active = ${health.active}`],["problemCount",`${health.label} Broken = ${health.problem}`],["inactiveCount",`${health.label} Inactive = ${health.inactive}`]].forEach(([className,value],index)=>{const span=document.createElementNS(SVGNS,"tspan");span.classList.add(className);span.setAttribute("x",45);span.setAttribute("dy",index?"1.25em":"0");span.textContent=value;statusText.appendChild(span);});
+            [["activeCount",`${health.label} Active = ${health.active}`],["problemCount",`${health.label} Broken = ${health.problem}`],["inactiveCount",`${health.label} Inactive = ${health.inactive}`]].forEach(([className,value],index)=>{const span=document.createElementNS(SVGNS,"tspan");span.classList.add(className);span.setAttribute("x",displaySize.width/2);span.setAttribute("dy",index?"1.25em":"0");span.textContent=value;statusText.appendChild(span);});
             if(/^#[0-9a-f]{6}$/i.test(node.statusTextColor))statusText.querySelectorAll("tspan").forEach(span=>span.style.fill=node.statusTextColor);
             g.appendChild(statusText);
         }
@@ -1619,11 +1659,13 @@ function resetSelectedRoute(){
 function findCenter(id){
 
     const n=nodes.find(x=>x.id===id);
+    const scale=getNodeScale(n);
+    const displaySize=getNodeDisplaySize(n);
 
     return{
 
-        x:n.x+(NODE_WIDTH/2),
-        y:n.y+32
+        x:n.x+(displaySize.width/2),
+        y:n.y+(32*scale.y)
 
     };
 
@@ -1711,9 +1753,11 @@ if(linkMode){
         selectedNode.text;
     document.getElementById("propNameSize").value=selectedNode.labelSize||13;
     document.getElementById("propNameThemeColor").checked=!/^#[0-9a-f]{6}$/i.test(selectedNode.labelColor);
-    document.getElementById("propNameColor").value=/^#[0-9a-f]{6}$/i.test(selectedNode.labelColor)?selectedNode.labelColor:(theme==="light"?"#17202a":"#ffffff");
+    document.getElementById("propNameColor").value=getEffectiveDeviceNameColor(selectedNode)||(theme==="light"?"#17202a":"#ffffff");
     document.getElementById("propNameColor").disabled=document.getElementById("propNameThemeColor").checked;
     document.getElementById("propNameBold").checked=Boolean(selectedNode.labelBold);
+    document.getElementById("propDeviceWidth").value=clampNodeWidth(selectedNode.width);
+    document.getElementById("propDeviceHeight").value=clampNodeHeight(selectedNode.height);
 
     populatePropertyDeviceFields(selectedNode);
 
@@ -1730,7 +1774,9 @@ if(linkMode){
 
     document.getElementById("propStatus").value=["active","inactive","problem"].includes(selectedNode.status)?selectedNode.status:"active";
     document.getElementById("propStatusNote").value=selectedNode.statusNote||"";
-    document.getElementById("propStatusTextSize").value=Math.min(32,Math.max(8,Number(selectedNode.statusTextSize)||10));
+    document.getElementById("propStatusUseGlobalSize").checked=selectedNode.statusTextUseGlobal!==false;
+    document.getElementById("propStatusTextSize").value=getEffectiveStatusTextSize(selectedNode);
+    document.getElementById("propStatusTextSize").disabled=selectedNode.statusTextUseGlobal!==false;
     document.getElementById("propStatusUseDefaultColors").checked=!/^#[0-9a-f]{6}$/i.test(selectedNode.statusTextColor);
     document.getElementById("propStatusTextColor").value=/^#[0-9a-f]{6}$/i.test(selectedNode.statusTextColor)?selectedNode.statusTextColor:"#ffffff";
     document.getElementById("propStatusTextColor").disabled=document.getElementById("propStatusUseDefaultColors").checked;
@@ -1825,6 +1871,9 @@ document
     const nextType=propDeviceType.value;
     const nextModel=propModel.value;
     const nextPortCount=Math.min(512,Math.max(0,Number(document.getElementById("propPortCount").value)||0));
+    const nextWidth=clampNodeWidth(document.getElementById("propDeviceWidth").value);
+    const nextHeight=clampNodeHeight(document.getElementById("propDeviceHeight").value);
+    const useGlobalStatusSize=document.getElementById("propStatusUseGlobalSize").checked;
     if(!name){ showFeedback("Nama device tidak boleh kosong",true); return; }
     if(ip && !isValidIP(ip)){ showFeedback("Format IP address tidak valid",true); return; }
     if(links.some(link=>(link.from===selectedNode.id&&link.sourcePort>nextPortCount)||(link.to===selectedNode.id&&link.targetPort>nextPortCount))){
@@ -1839,6 +1888,8 @@ document
         nextNode.labelSize=Math.min(48,Math.max(8,Number(document.getElementById("propNameSize").value)||13));
         nextNode.labelColor=document.getElementById("propNameThemeColor").checked?null:document.getElementById("propNameColor").value;
         nextNode.labelBold=document.getElementById("propNameBold").checked;
+        nextNode.width=nextWidth;
+        nextNode.height=nextHeight;
         nextNode.type=nextType;
         nextNode.ip=ip;
         nextNode.model=nextModel;
@@ -1847,7 +1898,8 @@ document
         nextNode.notes=document.getElementById("propNotes").value;
         nextNode.status=document.getElementById("propStatus").value;
         nextNode.statusNote=document.getElementById("propStatusNote").value.trim().slice(0,160);
-        nextNode.statusTextSize=Math.min(32,Math.max(8,Number(document.getElementById("propStatusTextSize").value)||10));
+        nextNode.statusTextSize=clampStatusTextSize(document.getElementById("propStatusTextSize").value);
+        nextNode.statusTextUseGlobal=useGlobalStatusSize;
         nextNode.statusTextColor=document.getElementById("propStatusUseDefaultColors").checked?null:document.getElementById("propStatusTextColor").value;
         nextNode.statusTextBold=document.getElementById("propStatusTextBold").checked;
 
@@ -1863,6 +1915,8 @@ document
     selectedNode.labelSize=Math.min(48,Math.max(8,Number(document.getElementById("propNameSize").value)||13));
     selectedNode.labelColor=document.getElementById("propNameThemeColor").checked?null:document.getElementById("propNameColor").value;
     selectedNode.labelBold=document.getElementById("propNameBold").checked;
+    selectedNode.width=nextWidth;
+    selectedNode.height=nextHeight;
     selectedNode.type=nextType;
 
     selectedNode.ip=
@@ -1880,7 +1934,8 @@ document
 
     selectedNode.status=document.getElementById("propStatus").value;
     selectedNode.statusNote=document.getElementById("propStatusNote").value.trim().slice(0,160);
-    selectedNode.statusTextSize=Math.min(32,Math.max(8,Number(document.getElementById("propStatusTextSize").value)||10));
+    selectedNode.statusTextSize=clampStatusTextSize(document.getElementById("propStatusTextSize").value);
+    selectedNode.statusTextUseGlobal=useGlobalStatusSize;
     selectedNode.statusTextColor=document.getElementById("propStatusUseDefaultColors").checked?null:document.getElementById("propStatusTextColor").value;
     selectedNode.statusTextBold=document.getElementById("propStatusTextBold").checked;
 
@@ -2021,7 +2076,7 @@ if(!dragging || e.pointerId!==draggingPointerId) return;
 
     dragging.setAttribute(
         "transform",
-        `translate(${selectedNode.x},${selectedNode.y})`
+        getNodeTransform(selectedNode)
     );
 
     drawLinksOnly();
@@ -2185,7 +2240,10 @@ function createLayoutData(){
             labelSize:Math.min(48,Math.max(8,Number(node.labelSize)||13)),
             labelColor:/^#[0-9a-f]{6}$/i.test(node.labelColor)?node.labelColor:null,
             labelBold:Boolean(node.labelBold),
-            statusTextSize:Math.min(32,Math.max(8,Number(node.statusTextSize)||10)),
+            width:clampNodeWidth(node.width),
+            height:clampNodeHeight(node.height),
+            statusTextSize:clampStatusTextSize(node.statusTextSize),
+            statusTextUseGlobal:node.statusTextUseGlobal!==false,
             statusTextColor:/^#[0-9a-f]{6}$/i.test(node.statusTextColor)?node.statusTextColor:null,
             statusTextBold:node.statusTextBold!==false,
             ip:node.ip || "",
@@ -2217,6 +2275,9 @@ function createLayoutData(){
         ,gridEnabled:gridEnabled
         ,snapEnabled:snapEnabled
         ,background:{...diagramBackground}
+        ,globalDeviceScale:clampGlobalDeviceScale(globalDeviceScale)
+        ,defaultDeviceNameColor:/^#[0-9a-f]{6}$/i.test(defaultDeviceNameColor)?defaultDeviceNameColor:null
+        ,globalStatusTextSize:clampStatusTextSize(globalStatusTextSize)
 
     };
 
@@ -2234,6 +2295,34 @@ function getSharedDiagramUrl(){
     return `https://raw.githubusercontent.com/${SHARED_DIAGRAM_REPOSITORY}/${SHARED_DIAGRAM_BRANCH}/${encodedPath}?cb=${Date.now()}`;
 }
 
+function getSharedDiagramCommitsUrl(){
+    const query=new URLSearchParams({path:SHARED_DIAGRAM_PATH,sha:SHARED_DIAGRAM_BRANCH,per_page:"1",cb:String(Date.now())});
+    return `https://api.github.com/repos/${SHARED_DIAGRAM_REPOSITORY}/commits?${query}`;
+}
+
+function formatGitHubDate(date){
+    return new Intl.DateTimeFormat("id-ID",{dateStyle:"long",timeStyle:"short",timeZone:"Asia/Makassar"}).format(date);
+}
+
+let sharedDiagramUpdatedAt=null;
+async function fetchSharedDiagramUpdatedAt(){
+    const response=await fetch(getSharedDiagramCommitsUrl(),{cache:"no-store",headers:{Accept:"application/vnd.github+json"}});
+    if(!response.ok) throw new Error(`GitHub commit information failed (${response.status})`);
+    const commits=await response.json();
+    const value=commits?.[0]?.commit?.committer?.date||commits?.[0]?.commit?.author?.date;
+    const updatedAt=value?new Date(value):null;
+    if(!updatedAt||Number.isNaN(updatedAt.getTime())) throw new Error("GitHub commit date is unavailable");
+    sharedDiagramUpdatedAt=updatedAt;
+    return updatedAt;
+}
+
+async function refreshGitHubLastUpdated(){
+    const output=document.getElementById("githubLastUpdated");
+    output.textContent="Retrieving from GitHub...";
+    try{output.textContent=formatGitHubDate(await fetchSharedDiagramUpdatedAt());}
+    catch(error){console.warn(error);sharedDiagramUpdatedAt=null;output.textContent="Unable to retrieve";}
+}
+
 async function updateLayoutFromGitHub(){
     const rawUrl=getSharedDiagramUrl();
     const response=await fetch(rawUrl,{cache:"no-store"});
@@ -2242,7 +2331,6 @@ async function updateLayoutFromGitHub(){
     render();
     updateView();
     saveToLocalStorage();
-    return new Date();
 }
 
 function saveToLocalStorage(){
@@ -2347,6 +2435,9 @@ function loadLayout(data){
     const legacy=Array.isArray(parsed);
     const layout=legacy ? {nodes:parsed,links:[]} : parsed;
     if(!layout || !Array.isArray(layout.nodes)) throw new Error("Struktur JSON harus memiliki daftar nodes");
+    const nextGlobalDeviceScale=clampGlobalDeviceScale(layout.globalDeviceScale);
+    const nextDefaultDeviceNameColor=/^#[0-9a-f]{6}$/i.test(layout.defaultDeviceNameColor)?layout.defaultDeviceNameColor:null;
+    const nextGlobalStatusTextSize=clampStatusTextSize(layout.globalStatusTextSize);
 
     const nextNodes=[];
     const ids=new Set();
@@ -2358,7 +2449,9 @@ function loadLayout(data){
         const x=Number(n.x), y=Number(n.y);
         if(!Number.isFinite(x)||!Number.isFinite(y)) throw new Error(`Koordinat node ${id} tidak valid`);
         ids.add(id);
-        nextNodes.push({id,type,text:String(n.text||type.toUpperCase()).slice(0,80),labelSize:Math.min(48,Math.max(8,Number(n.labelSize)||13)),labelColor:/^#[0-9a-f]{6}$/i.test(n.labelColor)?n.labelColor:null,labelBold:Boolean(n.labelBold),statusTextSize:Math.min(32,Math.max(8,Number(n.statusTextSize)||10)),statusTextColor:/^#[0-9a-f]{6}$/i.test(n.statusTextColor)?n.statusTextColor:null,statusTextBold:n.statusTextBold!==false,ip:String(n.ip||""),
+        const statusTextSize=clampStatusTextSize(n.statusTextSize);
+        const statusTextUseGlobal=typeof n.statusTextUseGlobal==="boolean"?n.statusTextUseGlobal:(!Number.isFinite(Number(n.statusTextSize))||statusTextSize===nextGlobalStatusTextSize);
+        nextNodes.push({id,type,text:String(n.text||type.toUpperCase()).slice(0,80),labelSize:Math.min(48,Math.max(8,Number(n.labelSize)||13)),labelColor:/^#[0-9a-f]{6}$/i.test(n.labelColor)?n.labelColor:null,labelBold:Boolean(n.labelBold),width:clampNodeWidth(n.width),height:clampNodeHeight(n.height),statusTextSize,statusTextUseGlobal,statusTextColor:/^#[0-9a-f]{6}$/i.test(n.statusTextColor)?n.statusTextColor:null,statusTextBold:n.statusTextBold!==false,ip:String(n.ip||""),
             model:String(n.model||""),portCount:Math.min(512,Math.max(0,Number.isInteger(Number(n.portCount))?Number(n.portCount):(DEFAULT_PORTS[type]||0))),
             location:String(n.location||""),notes:String(n.notes||""),
             iconType:n.iconType==="custom"&&isSafeImageData(n.iconData)?"custom":"default",
@@ -2409,6 +2502,9 @@ function loadLayout(data){
     gridEnabled=layout.gridEnabled!==false;
     snapEnabled=layout.snapEnabled!==false;
     diagramBackground=normalizeBackground(layout.background);
+    globalDeviceScale=nextGlobalDeviceScale;
+    defaultDeviceNameColor=nextDefaultDeviceNameColor;
+    globalStatusTextSize=nextGlobalStatusTextSize;
     selectedNode=null; selectedElement=null; selectedLink=null; selectedAnnotation=null; pendingAnnotation=null; contextTarget=null; firstLinkNode=null; linkMode=false;
     document.getElementById("propertyPanel").hidden=true;
     const cancelButton=document.getElementById("btnCancelLink");
@@ -2456,12 +2552,17 @@ function getDiagramBounds(){
 
     nodes.forEach(node=>{
 
+        const displaySize=getNodeDisplaySize(node);
+        const scale=getNodeScale(node);
         minX=Math.min(minX,node.x);
         minY=Math.min(minY,node.y);
-        maxX=Math.max(maxX,node.x+NODE_WIDTH);
+        maxX=Math.max(maxX,node.x+displaySize.width);
         const hasHealth=getPortCount(node)>1&&getConnectedDeviceStatus(node).total>0;
-        const healthHeight=84+String(node.text||"").split("\n").length*Math.max(14,(Number(node.labelSize)||13)*1.15)+Math.max(34,(Number(node.statusTextSize)||10)*4);
-        maxY=Math.max(maxY,node.y+(hasHealth?healthHeight:NODE_HEIGHT));
+        const labelLines=String(node.text||"").split("\n").length;
+        const labelSize=Math.min(48,Math.max(8,Number(node.labelSize)||13));
+        const labelBottom=(80*scale.y)+labelSize+(labelLines-1)*labelSize*1.2;
+        const healthBottom=(84+labelLines*Math.max(14,labelSize*1.15))*scale.y+getEffectiveStatusTextSize(node)*4;
+        maxY=Math.max(maxY,node.y+Math.max(displaySize.height,labelBottom,hasHealth?healthBottom:0));
 
     });
     annotations.forEach(annotation=>{
@@ -2675,7 +2776,7 @@ function createDevice(type,options={},position=getNextDevicePosition()){
     return{
         id:uniqueId(type),type,
         text:options.text||`${definition.label.toUpperCase()}-${String(count).padStart(3,"0")}`,
-        ip:"",model,portCount:capacity,location:"",notes:"",labelSize:13,labelColor:null,labelBold:false,statusTextSize:10,statusTextColor:null,statusTextBold:true,
+        ip:"",model,portCount:capacity,location:"",notes:"",labelSize:13,labelColor:null,labelBold:false,width:NODE_WIDTH,height:NODE_HEIGHT,statusTextSize:globalStatusTextSize,statusTextUseGlobal:true,statusTextColor:null,statusTextBold:true,
         iconType:options.iconType==="custom"&&options.iconData?"custom":"default",
         iconData:options.iconType==="custom"?options.iconData||"":"",
         pictureData:"",status:"active",statusNote:"",
@@ -2729,7 +2830,8 @@ function clearPaletteDropFeedback(){
 }
 function addPaletteDeviceAt(type,clientX,clientY){
     const point=getViewportPoint({clientX,clientY});
-    const position=getSnappedPosition(point.x-NODE_WIDTH/2,point.y-NODE_HEIGHT/2);
+    const defaultSize=getNodeDisplaySize({width:NODE_WIDTH,height:NODE_HEIGHT});
+    const position=getSnappedPosition(point.x-defaultSize.width/2,point.y-defaultSize.height/2);
     const node=addDevice(type,{},position,true);
     if(node) showFeedback(`${getDeviceDefinition(type).label} added`,false);
 }
@@ -2815,11 +2917,17 @@ const btnCancelLink=document.getElementById("btnCancelLink");
 const btnTheme=document.getElementById("btnTheme");
 const btnExportSVG=document.getElementById("btnExportSVG");
 const btnBackground=document.getElementById("btnBackground");
+const btnDiagramSettings=document.getElementById("btnDiagramSettings");
 
 const deviceModal=document.getElementById("deviceModal");
 const statusCheckModal=document.getElementById("statusCheckModal");
 const statusDeviceSearch=document.getElementById("statusDeviceSearch");
 const githubUpdateModal=document.getElementById("githubUpdateModal");
+const diagramSettingsModal=document.getElementById("diagramSettingsModal");
+const globalDeviceScaleInput=document.getElementById("globalDeviceScale");
+const defaultDeviceNameColorInput=document.getElementById("defaultDeviceNameColor");
+const defaultDeviceNameUseThemeInput=document.getElementById("defaultDeviceNameUseTheme");
+const globalStatusTextSizeInput=document.getElementById("globalStatusTextSize");
 
 const btnCreateDevice=document.getElementById("btnCreateDevice");
 const btnCloseDevice=document.getElementById("btnCloseDevice");
@@ -2846,6 +2954,7 @@ btnCheckStatus.onclick=function(){
 };
 btnOpenMain.onclick=function(){
     githubUpdateModal.style.display="flex";
+    refreshGitHubLastUpdated();
     document.getElementById("btnConfirmGitHubUpdate").focus();
 };
 document.getElementById("btnCloseGitHubUpdate").onclick=function(){
@@ -2860,9 +2969,10 @@ document.getElementById("btnConfirmGitHubUpdate").onclick=async function(){
     btnOpenMain.disabled=true;
     showFeedback("Updating diagram...",false);
     try{
-        const updatedAt=await updateLayoutFromGitHub();
+        await updateLayoutFromGitHub();
+        if(!sharedDiagramUpdatedAt){try{await fetchSharedDiagramUpdatedAt();}catch(error){console.warn(error);}}
         githubUpdateModal.style.display="none";
-        showFeedback(`Diagram berhasil diperbarui dari GitHub. Last Update: ${updatedAt.toLocaleString("id-ID")}`,false);
+        showFeedback(`Diagram berhasil diperbarui dari GitHub. Last uploaded/updated: ${sharedDiagramUpdatedAt?formatGitHubDate(sharedDiagramUpdatedAt):"Unable to retrieve"}`,false);
     }catch(error){
         console.error(error);
         showFeedback(`Failed to update diagram from GitHub. ${error.message}`,true);
@@ -2872,6 +2982,20 @@ document.getElementById("btnConfirmGitHubUpdate").onclick=async function(){
         btnOpenMain.disabled=false;
     }
 };
+
+function syncDiagramSettingsControls(){
+    globalDeviceScaleInput.value=String(Math.round(clampGlobalDeviceScale(globalDeviceScale)*100));
+    defaultDeviceNameUseThemeInput.checked=!/^#[0-9a-f]{6}$/i.test(defaultDeviceNameColor);
+    defaultDeviceNameColorInput.value=/^#[0-9a-f]{6}$/i.test(defaultDeviceNameColor)?defaultDeviceNameColor:(theme==="light"?"#17202a":"#ffffff");
+    defaultDeviceNameColorInput.disabled=defaultDeviceNameUseThemeInput.checked;
+    globalStatusTextSizeInput.value=clampStatusTextSize(globalStatusTextSize);
+}
+btnDiagramSettings.onclick=function(){syncDiagramSettingsControls();diagramSettingsModal.style.display="flex";globalDeviceScaleInput.focus();};
+document.getElementById("btnCloseDiagramSettings").onclick=function(){diagramSettingsModal.style.display="none";btnDiagramSettings.focus();};
+globalDeviceScaleInput.addEventListener("change",function(){const value=clampGlobalDeviceScale(Number(this.value)/100);if(value===globalDeviceScale)return;recordHistory();globalDeviceScale=value;this.value=String(Math.round(value*100));render();saveToLocalStorage();showFeedback(`Global device size: ${Math.round(value*100)}%`,false);});
+defaultDeviceNameUseThemeInput.addEventListener("change",function(){const value=this.checked?null:defaultDeviceNameColorInput.value;if(value===defaultDeviceNameColor)return;recordHistory();defaultDeviceNameColor=value;defaultDeviceNameColorInput.disabled=this.checked;render();saveToLocalStorage();});
+defaultDeviceNameColorInput.addEventListener("change",function(){if(defaultDeviceNameUseThemeInput.checked)return;const value=/^#[0-9a-f]{6}$/i.test(this.value)?this.value:null;if(value===defaultDeviceNameColor)return;recordHistory();defaultDeviceNameColor=value;render();saveToLocalStorage();});
+globalStatusTextSizeInput.addEventListener("change",function(){const value=clampStatusTextSize(this.value);if(value===globalStatusTextSize)return;recordHistory();globalStatusTextSize=value;this.value=String(value);render();saveToLocalStorage();showFeedback(`Global status text size: ${value}px`,false);});
 statusDeviceSearch.addEventListener("input",()=>renderStatusDeviceOptions(statusDeviceSearch.value));
 document.getElementById("btnApplyStatusCheck").onclick=function(){
     const nextTypes=[...statusCheckDraft];
@@ -2942,6 +3066,7 @@ const propAnnotationCropY=document.getElementById("propAnnotationCropY");
 propDeviceType.addEventListener("change",function(){if(selectedNode){populatePropertyDeviceFields(selectedNode,this.value);if(selectedNode.iconType!=="custom")setDefaultIconPreview(document.getElementById("propIconPreview"),{...selectedNode,type:this.value,model:propModel.value});}});
 propModel.addEventListener("change",function(){if(selectedNode){populatePropertyPorts(null,getDeviceDefinition(propDeviceType.value),this.value);if(selectedNode.iconType!=="custom")setDefaultIconPreview(document.getElementById("propIconPreview"),{...selectedNode,type:propDeviceType.value,model:this.value});}});
 document.getElementById("propNameThemeColor").addEventListener("change",function(){document.getElementById("propNameColor").disabled=this.checked;});
+document.getElementById("propStatusUseGlobalSize").addEventListener("change",function(){const input=document.getElementById("propStatusTextSize");input.disabled=this.checked;if(this.checked)input.value=globalStatusTextSize;});
 document.getElementById("propStatusUseDefaultColors").addEventListener("change",function(){document.getElementById("propStatusTextColor").disabled=this.checked;});
 
 document.getElementById("btnApplyNameStyleAll").onclick=function(){
@@ -2953,8 +3078,8 @@ document.getElementById("btnApplyNameStyleAll").onclick=function(){
 
 document.getElementById("btnApplyStatusStyleAll").onclick=function(){
     if(!selectedNode||nodes.length===0)return;
-    const style={statusTextSize:Math.min(32,Math.max(8,Number(document.getElementById("propStatusTextSize").value)||10)),statusTextColor:document.getElementById("propStatusUseDefaultColors").checked?null:document.getElementById("propStatusTextColor").value,statusTextBold:document.getElementById("propStatusTextBold").checked};
-    if(nodes.every(node=>(Number(node.statusTextSize)||10)===style.statusTextSize&&(node.statusTextColor||null)===style.statusTextColor&&(node.statusTextBold!==false)===style.statusTextBold)){showFeedback("Status text style already applied to all devices.",false);return;}
+    const style={statusTextSize:clampStatusTextSize(document.getElementById("propStatusTextSize").value),statusTextUseGlobal:document.getElementById("propStatusUseGlobalSize").checked,statusTextColor:document.getElementById("propStatusUseDefaultColors").checked?null:document.getElementById("propStatusTextColor").value,statusTextBold:document.getElementById("propStatusTextBold").checked};
+    if(nodes.every(node=>clampStatusTextSize(node.statusTextSize)===style.statusTextSize&&(node.statusTextUseGlobal!==false)===style.statusTextUseGlobal&&(node.statusTextColor||null)===style.statusTextColor&&(node.statusTextBold!==false)===style.statusTextBold)){showFeedback("Status text style already applied to all devices.",false);return;}
     const selectedId=selectedNode.id;recordHistory();nodes.forEach(node=>Object.assign(node,style));render();selectNodeById(selectedId);saveToLocalStorage();showFeedback("Status text style applied to all devices.",false);
 };
 
@@ -3238,7 +3363,8 @@ btnCreateDevice.onclick=function(){
 
 function getNextDevicePosition(){
     const rect=svg.getBoundingClientRect();
-    const center={x:(rect.width/2-viewX)/zoom-NODE_WIDTH/2,y:(rect.height/2-viewY)/zoom-NODE_HEIGHT/2};
+    const defaultSize=getNodeDisplaySize({width:NODE_WIDTH,height:NODE_HEIGHT});
+    const center={x:(rect.width/2-viewX)/zoom-defaultSize.width/2,y:(rect.height/2-viewY)/zoom-defaultSize.height/2};
     for(let i=0;i<20;i++){
         const p=getSnappedPosition(center.x+(i%5)*40,center.y+Math.floor(i/5)*40);
         if(!nodes.some(n=>Math.abs(n.x-p.x)<30&&Math.abs(n.y-p.y)<30)) return p;
@@ -3255,6 +3381,7 @@ document.addEventListener("keydown",function(e){
         if(pendingAnnotation){pendingAnnotation=null;document.getElementById("statusBar").textContent="Ready";}
         if(deviceModal.style.display==="flex"){deviceModal.style.display="none";btnAddDevice.focus();}
         if(backgroundModal.style.display==="flex"){backgroundModal.style.display="none";btnBackground.focus();}
+        if(diagramSettingsModal.style.display==="flex"){diagramSettingsModal.style.display="none";btnDiagramSettings.focus();}
         if(statusCheckModal.style.display==="flex"){statusCheckModal.style.display="none";btnCheckStatus.focus();}
         if(githubUpdateModal.style.display==="flex"){githubUpdateModal.style.display="none";btnOpenMain.focus();}
         contextMenu.style.display="none";
