@@ -29,6 +29,9 @@ html,body{
     --node-fill:#2f3136;
     --node-stroke:#00c8ff;
     --grid-minor:rgba(255,255,255,.05);
+    --button-bg:#3b3b3b;
+    --button-text:#ffffff;
+    --hover-bg:#0094ff;
 }
 
 body.lightTheme{
@@ -41,7 +44,11 @@ body.lightTheme{
     --border:#c7d0d9;
     --node-fill:#ffffff;
     --node-stroke:#0077c8;
+    --button-bg:#e2e8ee;
+    --button-text:#17202a;
+    --hover-bg:#cbd8e3;
 }
+body{color-scheme:dark;}body.lightTheme{color-scheme:light;}
 
 html,body{background:var(--page-bg);color:var(--text);}
 
@@ -121,13 +128,13 @@ html,body{background:var(--page-bg);color:var(--text);}
 
     padding:0 18px;
 
-    background:#3b3b3b;
+    background:var(--button-bg);
 
     border:none;
 
     border-radius:6px;
 
-    color:white;
+    color:var(--button-text);
 
     cursor:pointer;
 
@@ -137,7 +144,7 @@ html,body{background:var(--page-bg);color:var(--text);}
 
 .tools button:hover{
 
-    background:#0094ff;
+    background:var(--hover-bg);
 
 }
 
@@ -467,6 +474,7 @@ html,body{background:var(--page-bg);color:var(--text);}
 
 .node .statusBadge{stroke:#ffffff;stroke-width:2;vector-effect:non-scaling-stroke;}
 .node .portUsageText{fill:#7ee0ff;font-size:10px;font-weight:600;paint-order:stroke;stroke:var(--canvas-bg);stroke-width:3px;}
+.customIconNode:not(.selected) .deviceIcon{fill:transparent;stroke:transparent;}
 .statusBadge.active{fill:#27ae60;}
 .statusBadge.inactive{fill:#7f8c8d;}
 .statusBadge.problem{fill:#e53935;}
@@ -641,6 +649,11 @@ body.lightTheme #routeControls small{color:#52606d;}
     margin-right:8px;
 
     padding:8px 16px;
+    border:1px solid var(--border);
+    border-radius:5px;
+    background:var(--button-bg);
+    color:var(--button-text);
+    cursor:pointer;
 
 }
 .contextMenu{
@@ -688,7 +701,7 @@ button.connectionStatusRow{width:100%;cursor:pointer;}
 .connectionDetail dt{color:var(--muted,#aaa);}.connectionDetail dd{margin:0;overflow-wrap:anywhere;}
 
 body.lightTheme .node text{fill:#17202a;}
-body.lightTheme .tools button{color:#fff;}
+body.lightTheme .tools button.toggle.active{color:#fff;}
 body.lightTheme .linkLabel{fill:#17202a;}
 
 button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[role="menuitem"]:focus-visible{
@@ -725,6 +738,6 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 
 .contextMenu div:hover{
 
-    background:#3c3c3c;
+    background:var(--hover-bg);
 
 }
