@@ -723,12 +723,18 @@ function getActivePortCount(node){
 }
 
 function getConnectedDeviceStatus(node){
-    const remoteIds=new Set();
-    links.forEach(link=>{
-        if(link.from===node.id)remoteIds.add(link.to);
-        if(link.to===node.id)remoteIds.add(link.from);
-    });
-    const connected=[...remoteIds].map(id=>nodes.find(item=>item.id===id)).filter(remote=>remote&&getDeviceDefinition(remote.type).status);
+    const visited=new Set([node.id]),queue=[node.id],connected=[];
+    while(queue.length){
+        const currentId=queue.shift();
+        links.forEach(link=>{
+            const remoteId=link.from===currentId?link.to:link.to===currentId?link.from:null;
+            if(!remoteId||visited.has(remoteId))return;
+            visited.add(remoteId);
+            const remote=nodes.find(item=>item.id===remoteId);if(!remote)return;
+            if(getDeviceDefinition(remote.type).status)connected.push(remote);
+            else if(getPortCount(remote)>1)queue.push(remoteId);
+        });
+    }
     const summary={active:0,problem:0,inactive:0,total:connected.length,label:"Device"};
     connected.forEach(remote=>{const status=["active","problem","inactive"].includes(remote.status)?remote.status:"active";summary[status]++;});
     const types=new Set(connected.map(remote=>remote.type));
