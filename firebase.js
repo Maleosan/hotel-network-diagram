@@ -647,7 +647,7 @@ async function syncReviewedChanges({all=false}={}){
     const versions=[...new Set(loadedSyncChanges.map(item=>item.newVersion))].sort((a,b)=>a-b);
     for(const version of versions){const atVersion=loadedSyncChanges.filter(item=>item.newVersion===version);if(atVersion.every(item=>resolved.has(item.changeId)))cursor=version;else break;}
     const remaining=[...resolved].filter(id=>{const item=loadedSyncChanges.find(change=>change.changeId===id);return !item||item.newVersion>cursor;}).slice(-500);
-    await setDoc(getSyncStateRef(currentUser.uid,loadedSyncState.publication.id),{sourceOwnerId:loadedSyncState.publication.ownerId,sourceName:loadedSyncState.publication.ownerName||loadedSyncState.publication.ownerEmail||"Shared user",lastSyncedVersion:cursor,lastSourceVersion:loadedSyncState.publication.latestVersion||cursor,resolvedChangeIds:remaining,lastSyncTime:serverTimestamp()},{merge:true});
+    await setDoc(getSyncStateRef(currentUser.uid,loadedSyncState.publication.id),{sourceOwnerId:loadedSyncState.publication.ownerId,sourceName:loadedSyncState.publication.ownerName||loadedSyncState.publication.ownerEmail||"Shared user",lastSyncedFromUser:loadedSyncState.publication.ownerId,lastSyncedDiagram:loadedSyncState.publication.diagramId||DIAGRAM_ID,lastSyncedVersion:cursor,lastSourceVersion:loadedSyncState.publication.latestVersion||cursor,resolvedChangeIds:remaining,lastSyncTime:serverTimestamp()},{merge:true});
     bridge.showFeedback(`Sync selesai. Cursor sekarang v${cursor}.`,false);await reviewSelectedPublication();
 }
 
