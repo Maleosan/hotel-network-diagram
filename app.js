@@ -2367,9 +2367,20 @@ function createLayoutData(){
 }
 
 const LOCAL_STORAGE_KEY="hotelNetworkDiagram.latest";
+const USER_LOCAL_STORAGE_PREFIX=`${LOCAL_STORAGE_KEY}.user`;
+const LEGACY_CACHE_OWNER_KEY=`${LOCAL_STORAGE_KEY}.legacyOwner`;
 const SHARED_DIAGRAM_REPOSITORY="Maleosan/hotel-network-diagram";
 const SHARED_DIAGRAM_BRANCH="main";
 const SHARED_DIAGRAM_PATH="data/HOTEL-NETWORK-DIAGRAM (10).json";
+let activeLocalStorageKey=LOCAL_STORAGE_KEY;
+
+function getUserLocalStorageKey(uid){
+    return `${USER_LOCAL_STORAGE_PREFIX}.${String(uid||"").replace(/[^a-zA-Z0-9_-]/g,"")}`;
+}
+
+function setLocalStorageUser(uid){
+    activeLocalStorageKey=uid?getUserLocalStorageKey(uid):LOCAL_STORAGE_KEY;
+}
 
 function getSharedDiagramUrl(){
     const encodedPath=SHARED_DIAGRAM_PATH.split("/").map(segment=>
@@ -2416,12 +2427,12 @@ async function updateLayoutFromGitHub(){
     saveToLocalStorage();
 }
 
-function saveToLocalStorage(){
+function saveToLocalStorage(options={}){
 
     try{
 
         localStorage.setItem(
-            LOCAL_STORAGE_KEY,
+            activeLocalStorageKey,
             JSON.stringify(createLayoutData())
         );
 
@@ -2432,13 +2443,17 @@ function saveToLocalStorage(){
 
     }
 
+    if(options.notifyCloud!==false&&typeof window!=="undefined"&&typeof window.dispatchEvent==="function"){
+        window.dispatchEvent(new Event("hotel-network-diagram-change"));
+    }
+
 }
 
 function loadFromLocalStorage(){
 
     try{
 
-        const saved=localStorage.getItem(LOCAL_STORAGE_KEY);
+        const saved=localStorage.getItem(activeLocalStorageKey);
 
         if(saved){
 
@@ -2459,7 +2474,7 @@ function loadFromLocalStorage(){
 
 function resetToDefaultDiagram(){
 
-    localStorage.removeItem(LOCAL_STORAGE_KEY);
+    localStorage.removeItem(activeLocalStorageKey);
 
     loadLayout(JSON.stringify({
         nodes:DEFAULT_NODES,
@@ -2475,6 +2490,7 @@ function resetToDefaultDiagram(){
 
     render();
     updateView();
+    saveToLocalStorage();
 
 }
 
@@ -2966,6 +2982,45 @@ document.getElementById("canvasContainer").addEventListener("click",event=>{
     }
     hideProperties();
 });
+
+window.hotelNetworkDiagramCloudBridge=Object.freeze({
+    getDiagramData:()=>createLayoutData(),
+    setStorageUser:uid=>setLocalStorageUser(uid),
+    getUserLocalCache:uid=>{
+        try{return localStorage.getItem(getUserLocalStorageKey(uid));}
+        catch(error){console.warn("Unable to read the user cache",error);return null;}
+    },
+    getLegacyLocalCache:uid=>{
+        try{
+            const owner=localStorage.getItem(LEGACY_CACHE_OWNER_KEY);
+            if(owner&&owner!==uid)return null;
+            const saved=localStorage.getItem(LOCAL_STORAGE_KEY);
+            if(saved&&!owner)localStorage.setItem(LEGACY_CACHE_OWNER_KEY,uid);
+            return saved;
+        }catch(error){console.warn("Unable to read the legacy cache",error);return null;}
+    },
+    loadDiagramData:data=>{
+        loadLayout(data);render();updateView();saveToLocalStorage({notifyCloud:false});
+    },
+    loadDefaultDiagram:()=>{
+        loadLayout({nodes:DEFAULT_NODES,links:DEFAULT_LINKS,annotations:[],statusSummaryTypes:[],zoom:1,viewX:0,viewY:0,diagramName:"HOTEL NETWORK DIAGRAM",theme:"dark",gridEnabled:true,snapEnabled:true,background:{type:"theme",color:"#202020",data:"",fit:"cover",customized:false},globalDeviceScale:1,defaultDeviceNameColor:null,globalStatusTextSize:10});
+        render();updateView();saveToLocalStorage({notifyCloud:false});
+    },
+    showFeedback:(message,isError=false)=>showFeedback(message,isError)
+});
+
+document.getElementById("btnContinueLocal").addEventListener("click",()=>{
+    document.getElementById("authGate").hidden=true;
+    showFeedback("Mode lokal aktif. Perubahan hanya disimpan di browser sampai Firebase tersedia.",false);
+});
+
+setTimeout(()=>{
+    if(window.hotelFirebaseStarted)return;
+    document.getElementById("authMessage").textContent="Firebase tidak dapat dimuat. Periksa koneksi internet, lalu muat ulang halaman.";
+    document.getElementById("btnGoogleSignIn").hidden=true;
+    document.getElementById("btnContinueLocal").hidden=false;
+},8000);
+
 loadFromLocalStorage();
 render();
 updateView();
