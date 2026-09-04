@@ -201,7 +201,7 @@ body{display:flex;flex-direction:column;}
 
 .tools .modeToggle.active{background:#7a5a00;color:#fff3c4;box-shadow:inset 0 0 0 1px #ffca55;}
 body.readMode #paletteContent{opacity:.58;pointer-events:none;user-select:none;}
-body.readMode #propertyPanel :is(input,select,textarea,button):not(#btnCloseProperties){pointer-events:none;}
+body.readMode #propertyPanel{display:none!important;}
 body.readMode .node{cursor:pointer;}
 body.readMode .annotation{cursor:pointer;}
 body.readMode .waypointHandle{display:none;}

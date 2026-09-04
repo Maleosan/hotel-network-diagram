@@ -108,7 +108,7 @@ function getAuthErrorMessage(error){
 }
 
 function getCloudErrorMessage(error){
-    if(error?.code==="permission-denied")return "Firestore menolak akses. Publish firestore.rules terlebih dahulu.";
+    if(error?.code==="permission-denied")return "Firestore menolak akses data share. Muat ulang login dan pastikan firestore.rules terbaru sudah dipublish.";
     if(error?.code==="unavailable")return "Firestore tidak tersedia. Periksa koneksi internet.";
     if(error?.code==="resource-exhausted")return "Kuota Firestore sementara telah tercapai.";
     return error?.message||"Firestore gagal memproses data.";
@@ -498,9 +498,20 @@ async function publishDiagram(){
 }
 
 async function listAvailablePublications(){
-    const found=new Map(),root=collection(db,PUBLICATION_COLLECTION),queries=[query(root,where("ownerId","==",currentUser.uid)),query(root,where("allowedUserIds","array-contains",currentUser.uid))];
-    if(currentUser.email)queries.push(query(root,where("allowedEmails","array-contains",currentUser.email.toLowerCase())));
-    for(const request of queries){const snapshot=await getDocs(request);snapshot.docs.forEach(item=>found.set(item.id,{id:item.id,...item.data()}));}
+    const found=new Map(),root=collection(db,PUBLICATION_COLLECTION),requests=[{scope:"UID",value:query(root,where("allowedUserIds","array-contains",currentUser.uid))}];
+    if(currentUser.email)requests.push({scope:"email",value:query(root,where("allowedEmails","array-contains",currentUser.email.toLowerCase()))});
+    const results=await Promise.allSettled(requests.map(item=>getDocs(item.value)));
+    let successfulQueries=0,firstError=null;
+    results.forEach((result,index)=>{
+        if(result.status==="fulfilled"){
+            successfulQueries++;
+            result.value.docs.forEach(item=>found.set(item.id,{id:item.id,...item.data()}));
+            return;
+        }
+        firstError||=result.reason;
+        console.warn(`Shared diagram ${requests[index].scope} query failed`,result.reason);
+    });
+    if(!successfulQueries&&firstError)throw firstError;
     return[...found.values()].sort((a,b)=>String(a.ownerName||a.ownerEmail).localeCompare(String(b.ownerName||b.ownerEmail)));
 }
 
