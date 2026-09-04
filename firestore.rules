@@ -6,6 +6,22 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == userId;
     }
 
+    function canReadPublishedData(data) {
+      return request.auth != null && (
+        data.ownerId == request.auth.uid ||
+        (data.allowedUserIds is list && request.auth.uid in data.allowedUserIds) ||
+        (request.auth.token.email is string && data.allowedEmails is list && request.auth.token.email in data.allowedEmails)
+      );
+    }
+
+    function canReadPublication(publicationId) {
+      return canReadPublishedData(get(/databases/$(database)/documents/publishedDiagrams/$(publicationId)).data);
+    }
+
+    function ownsPublication(publicationId) {
+      return request.auth != null && get(/databases/$(database)/documents/publishedDiagrams/$(publicationId)).data.ownerId == request.auth.uid;
+    }
+
     match /users/{userId} {
       allow read, create, update, delete: if isOwner(userId);
 
@@ -19,6 +35,31 @@ service cloud.firestore {
         match /photos/{photoId} {
           allow read, create, update, delete: if isOwner(userId);
         }
+
+        match /changes/{changeId} {
+          allow read, create, update, delete: if isOwner(userId);
+        }
+
+        match /syncStates/{publicationId} {
+          allow read, create, update, delete: if isOwner(userId);
+        }
+      }
+    }
+
+    match /publishedDiagrams/{publicationId} {
+      allow read: if canReadPublishedData(resource.data);
+      allow create: if request.auth != null && request.resource.data.ownerId == request.auth.uid;
+      allow update: if request.auth != null && resource.data.ownerId == request.auth.uid && request.resource.data.ownerId == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.ownerId == request.auth.uid;
+
+      match /changes/{changeId} {
+        allow read: if canReadPublication(publicationId);
+        allow create, update, delete: if ownsPublication(publicationId);
+      }
+
+      match /photos/{photoId} {
+        allow read: if canReadPublication(publicationId);
+        allow create, update, delete: if ownsPublication(publicationId);
       }
     }
   }
