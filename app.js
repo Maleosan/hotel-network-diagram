@@ -1392,6 +1392,8 @@ nodesLayer.appendChild(g);
 
 function showNodeProperties(){
 
+    if(readOnlyMode){document.getElementById("propertyPanel").hidden=true;return;}
+
     document.getElementById("propertyPanel").hidden=false;
     document.getElementById("nodeProperties").style.display="";
     document.getElementById("linkProperties").style.display="none";
@@ -1401,6 +1403,8 @@ function showNodeProperties(){
 
 function showLinkProperties(){
 
+    if(readOnlyMode){document.getElementById("propertyPanel").hidden=true;return;}
+
     document.getElementById("propertyPanel").hidden=false;
     document.getElementById("nodeProperties").style.display="none";
     document.getElementById("linkProperties").style.display="";
@@ -1409,6 +1413,7 @@ function showLinkProperties(){
 }
 
 function showAnnotationProperties(annotation){
+    if(readOnlyMode){document.getElementById("propertyPanel").hidden=true;return;}
     document.getElementById("propertyPanel").hidden=false;document.getElementById("nodeProperties").style.display="none";document.getElementById("linkProperties").style.display="none";document.getElementById("annotationProperties").style.display="";
     const isText=annotation.type==="text";document.getElementById("textAnnotationProperties").hidden=!isText;document.getElementById("imageAnnotationProperties").hidden=isText;
     if(isText){propAnnotationText.value=annotation.text||"";propAnnotationFontSize.value=annotation.fontSize||18;propAnnotationColor.value=/^#[0-9a-f]{6}$/i.test(annotation.color)?annotation.color:"#ffffff";propAnnotationBold.checked=annotation.bold!==false;propAnnotationItalic.checked=Boolean(annotation.italic);propAnnotationAlign.value=["start","middle","end"].includes(annotation.align)?annotation.align:"start";}
@@ -3245,6 +3250,7 @@ function setReadOnlyMode(enabled,{announce=true}={}){
     document.getElementById("diagramName").readOnly=readOnlyMode;
     ["nodeProperties","linkProperties","annotationProperties"].forEach(id=>{document.getElementById(id).inert=readOnlyMode;});
     if(readOnlyMode){
+        document.getElementById("propertyPanel").hidden=true;
         pendingAnnotation=null;cancelLinkMode();contextMenu.style.display="none";dragging=null;annotationDrag=null;waypointDrag=null;touchPaletteDrag=null;clearPaletteDropFeedback();
         ["deviceModal","statusCheckModal","githubUpdateModal","backgroundModal","diagramSettingsModal","syncMergeModal"].forEach(id=>{document.getElementById(id).style.display="none";});
         if(cameraModal.style.display==="flex")closeDeviceCamera();
