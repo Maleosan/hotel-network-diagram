@@ -15,6 +15,10 @@ service cloud.firestore {
         match /chunks/{chunkId} {
           allow read, create, update, delete: if isOwner(userId);
         }
+
+        match /photos/{photoId} {
+          allow read, create, update, delete: if isOwner(userId);
+        }
       }
     }
   }
