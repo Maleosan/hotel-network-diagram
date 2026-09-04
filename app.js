@@ -1950,6 +1950,9 @@ if(linkMode){
     document.getElementById("propIP").value=
         selectedNode.ip || "";
 
+    document.getElementById("propMAC").value=
+        selectedNode.mac || "";
+
     document.getElementById("propLocation").value=
         selectedNode.location || "";
 
@@ -2056,6 +2059,7 @@ document
 
     const name=document.getElementById("propName").value.trim();
     const ip=document.getElementById("propIP").value.trim();
+    const mac=document.getElementById("propMAC").value.trim().toUpperCase().replace(/-/g,":");
     const nextType=propDeviceType.value;
     const nextModel=propModel.value;
     const nextPortCount=Math.min(512,Math.max(0,Number(document.getElementById("propPortCount").value)||0));
@@ -2064,6 +2068,7 @@ document
     const useGlobalStatusSize=document.getElementById("propStatusUseGlobalSize").checked;
     if(!name){ showFeedback("Nama device tidak boleh kosong",true); return; }
     if(ip && !isValidIP(ip)){ showFeedback("Format IP address tidak valid",true); return; }
+    if(mac && !isValidMac(mac)){ showFeedback("Format MAC address tidak valid",true); return; }
     if(links.some(link=>(link.from===selectedNode.id&&link.sourcePort>nextPortCount)||(link.to===selectedNode.id&&link.targetPort>nextPortCount))){
         showFeedback("Jumlah port lebih kecil dari port yang sedang digunakan",true); return;
     }
@@ -2080,6 +2085,7 @@ document
         nextNode.height=nextHeight;
         nextNode.type=nextType;
         nextNode.ip=ip;
+        nextNode.mac=mac;
         nextNode.model=nextModel;
         nextNode.portCount=nextPortCount;
         nextNode.location=document.getElementById("propLocation").value;
@@ -2110,6 +2116,8 @@ document
     selectedNode.ip=
         ip;
 
+    selectedNode.mac=mac;
+
     selectedNode.model=nextModel;
 
     selectedNode.portCount=nextPortCount;
@@ -2136,6 +2144,7 @@ function isValidIP(value){
     const parts=value.split(".");
     return parts.length===4 && parts.every(part=>/^\d{1,3}$/.test(part)&&Number(part)<=255);
 }
+function isValidMac(value){return /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(value);}
 /* ==========================================================
    DRAG ENGINE
 ========================================================== */
@@ -2690,7 +2699,7 @@ function loadLayout(data){
         ids.add(id);
         const statusTextSize=clampStatusTextSize(n.statusTextSize);
         const statusTextUseGlobal=typeof n.statusTextUseGlobal==="boolean"?n.statusTextUseGlobal:(!Number.isFinite(Number(n.statusTextSize))||statusTextSize===nextGlobalStatusTextSize);
-        nextNodes.push({id,type,text:String(n.text||type.toUpperCase()).slice(0,80),labelSize:Math.min(48,Math.max(8,Number(n.labelSize)||13)),labelColor:/^#[0-9a-f]{6}$/i.test(n.labelColor)?n.labelColor:null,labelBold:Boolean(n.labelBold),width:clampNodeWidth(n.width),height:clampNodeHeight(n.height),statusTextSize,statusTextUseGlobal,statusTextColor:/^#[0-9a-f]{6}$/i.test(n.statusTextColor)?n.statusTextColor:null,statusTextBold:n.statusTextBold!==false,ip:String(n.ip||""),
+        nextNodes.push({id,type,text:String(n.text||type.toUpperCase()).slice(0,80),labelSize:Math.min(48,Math.max(8,Number(n.labelSize)||13)),labelColor:/^#[0-9a-f]{6}$/i.test(n.labelColor)?n.labelColor:null,labelBold:Boolean(n.labelBold),width:clampNodeWidth(n.width),height:clampNodeHeight(n.height),statusTextSize,statusTextUseGlobal,statusTextColor:/^#[0-9a-f]{6}$/i.test(n.statusTextColor)?n.statusTextColor:null,statusTextBold:n.statusTextBold!==false,ip:String(n.ip||""),mac:String(n.mac||""),
             model:String(n.model||""),portCount:Math.min(512,Math.max(0,Number.isInteger(Number(n.portCount))?Number(n.portCount):(DEFAULT_PORTS[type]||0))),
             location:String(n.location||""),notes:String(n.notes||""),
             iconType:n.iconType==="custom"&&isSafeImageData(n.iconData)?"custom":"default",
@@ -2726,10 +2735,12 @@ function loadLayout(data){
     nodes.splice(0,nodes.length,...nextNodes);
     devicePictureInfo.clear();
     links.splice(0,links.length,...nextLinks);
+    const annotationIds=new Set();
     const nextAnnotations=(Array.isArray(layout.annotations)?layout.annotations:[]).flatMap(raw=>{
         if(!raw||!Number.isFinite(Number(raw.x))||!Number.isFinite(Number(raw.y)))return[];
-        if(raw.type==="text"&&String(raw.text||"").trim())return[{id:uniqueId("annotation"),type:"text",text:String(raw.text).slice(0,500),fontSize:Math.min(96,Math.max(8,Number(raw.fontSize)||18)),color:/^#[0-9a-f]{6}$/i.test(raw.color)?raw.color:"#ffffff",bold:raw.bold!==false,italic:Boolean(raw.italic),align:["start","middle","end"].includes(raw.align)?raw.align:"start",x:Number(raw.x),y:Number(raw.y)}];
-        if(raw.type==="image"&&isSafeImageData(raw.data))return[{id:uniqueId("annotation"),type:"image",data:raw.data,width:Math.min(1200,Math.max(40,Number(raw.width)||240)),height:Math.min(900,Math.max(40,Number(raw.height)||160)),cropZoom:Math.min(4,Math.max(1,Number(raw.cropZoom)||1)),cropX:Math.min(100,Math.max(0,Number.isFinite(Number(raw.cropX))?Number(raw.cropX):50)),cropY:Math.min(100,Math.max(0,Number.isFinite(Number(raw.cropY))?Number(raw.cropY):50)),x:Number(raw.x),y:Number(raw.y)}];
+        let annotationId=typeof raw.id==="string"&&raw.id.trim()?raw.id.trim():uniqueId("annotation");while(annotationIds.has(annotationId))annotationId=uniqueId("annotation");annotationIds.add(annotationId);
+        if(raw.type==="text"&&String(raw.text||"").trim())return[{id:annotationId,type:"text",text:String(raw.text).slice(0,500),fontSize:Math.min(96,Math.max(8,Number(raw.fontSize)||18)),color:/^#[0-9a-f]{6}$/i.test(raw.color)?raw.color:"#ffffff",bold:raw.bold!==false,italic:Boolean(raw.italic),align:["start","middle","end"].includes(raw.align)?raw.align:"start",x:Number(raw.x),y:Number(raw.y)}];
+        if(raw.type==="image"&&isSafeImageData(raw.data))return[{id:annotationId,type:"image",data:raw.data,width:Math.min(1200,Math.max(40,Number(raw.width)||240)),height:Math.min(900,Math.max(40,Number(raw.height)||160)),cropZoom:Math.min(4,Math.max(1,Number(raw.cropZoom)||1)),cropX:Math.min(100,Math.max(0,Number.isFinite(Number(raw.cropX))?Number(raw.cropX):50)),cropY:Math.min(100,Math.max(0,Number.isFinite(Number(raw.cropY))?Number(raw.cropY):50)),x:Number(raw.x),y:Number(raw.y)}];
         return[];
     });
     annotations.splice(0,annotations.length,...nextAnnotations);
@@ -3208,12 +3219,13 @@ const btnBackground=document.getElementById("btnBackground");
 const btnDiagramSettings=document.getElementById("btnDiagramSettings");
 const btnMenuToggle=document.getElementById("btnMenuToggle");
 const btnModeToggle=document.getElementById("btnModeToggle");
+const btnNewDiagram=document.getElementById("btnNewDiagram");
 const toolbarMenu=document.getElementById("toolbarMenu");
 
 const READ_ONLY_MODE_KEY="hotelNetworkDiagram.readOnlyMode";
 const READ_ONLY_MUTATION_IDS=new Set([
-    "btnOpen","btnOpenMain","btnUndo","btnRedo","btnAddDevice","btnAddText","btnAddImage","btnAddLink","btnCancelLink",
-    "btnCheckStatus","btnResetDefault","btnGrid","btnSnap","btnTheme","btnBackground","btnDiagramSettings"
+    "btnNewDiagram","btnOpen","btnOpenMain","btnUndo","btnRedo","btnAddDevice","btnAddText","btnAddImage","btnAddLink","btnCancelLink",
+    "btnCheckStatus","btnResetDefault","btnGrid","btnSnap","btnTheme","btnBackground","btnDiagramSettings","btnSyncMerge"
 ]);
 
 function showReadOnlyNotice(){showFeedback("Read Mode aktif. Pilih Edit Mode untuk mengubah diagram.",false);}
@@ -3221,7 +3233,7 @@ function showReadOnlyNotice(){showFeedback("Read Mode aktif. Pilih Edit Mode unt
 function isReadOnlyMutationTarget(target){
     const element=target instanceof Element?target.closest("button,input,select,textarea,[role='menuitem']"):null;
     if(!element||element.id==="btnModeToggle"||element.id==="btnCloseProperties")return false;
-    return READ_ONLY_MUTATION_IDS.has(element.id)||Boolean(element.closest("#propertyPanel,#deviceModal,#statusCheckModal,#githubUpdateModal,#cameraModal,#backgroundModal,#diagramSettingsModal,#contextMenu"));
+    return READ_ONLY_MUTATION_IDS.has(element.id)||Boolean(element.closest("#propertyPanel,#deviceModal,#statusCheckModal,#githubUpdateModal,#cameraModal,#backgroundModal,#diagramSettingsModal,#syncMergeModal,#contextMenu"));
 }
 
 function setReadOnlyMode(enabled,{announce=true}={}){
@@ -3234,7 +3246,7 @@ function setReadOnlyMode(enabled,{announce=true}={}){
     ["nodeProperties","linkProperties","annotationProperties"].forEach(id=>{document.getElementById(id).inert=readOnlyMode;});
     if(readOnlyMode){
         pendingAnnotation=null;cancelLinkMode();contextMenu.style.display="none";dragging=null;annotationDrag=null;waypointDrag=null;touchPaletteDrag=null;clearPaletteDropFeedback();
-        ["deviceModal","statusCheckModal","githubUpdateModal","backgroundModal","diagramSettingsModal"].forEach(id=>{document.getElementById(id).style.display="none";});
+        ["deviceModal","statusCheckModal","githubUpdateModal","backgroundModal","diagramSettingsModal","syncMergeModal"].forEach(id=>{document.getElementById(id).style.display="none";});
         if(cameraModal.style.display==="flex")closeDeviceCamera();
     }
     try{localStorage.setItem(READ_ONLY_MODE_KEY,readOnlyMode?"1":"0");}catch(error){console.warn("Unable to save diagram mode",error);}
@@ -3613,6 +3625,11 @@ btnResetDefault.onclick=function(){
 
     }
 
+};
+btnNewDiagram.onclick=function(){
+    if(!confirm("Create a new blank diagram? Unsaved local changes will be replaced."))return;
+    recordHistory();loadLayout({nodes:[],links:[],annotations:[],statusSummaryTypes:[],zoom:1,viewX:0,viewY:0,diagramName:"NEW NETWORK DIAGRAM",theme,gridEnabled,snapEnabled,background:{type:"theme",color:"#202020",data:"",fit:"cover",customized:false},globalDeviceScale:1,defaultDeviceNameColor:null,globalStatusTextSize:10});
+    render();updateView();saveToLocalStorage();showFeedback("New blank diagram created",false);
 };
 btnGrid.onclick=function(){
 
