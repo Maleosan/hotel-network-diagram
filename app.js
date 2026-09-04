@@ -69,6 +69,10 @@ let globalDeviceScale=1;
 let defaultDeviceNameColor=null;
 let globalStatusTextSize=10;
 let pendingDeviceIconData="";
+let cameraStream=null;
+let cameraTargetNode=null;
+let capturedDevicePhotoData="";
+let cameraSessionId=0;
 const DEVICE_LIBRARY={
     router:{category:"Network",label:"Router",icon:"router",ports:5,models:["Generic Router","Branch Router"]},
     core_router:{category:"Network",label:"Core Router",icon:"router",ports:8,models:["Core Router","High Capacity Router"]},
@@ -370,6 +374,19 @@ function applyLinkAppearance(line,link){
 
 }
 
+function isLinkConnectedToSelectedNode(link){
+    return Boolean(selectedNode&&link&&(link.from===selectedNode.id||link.to===selectedNode.id));
+}
+
+function applyLinkSelectionState(line,link){
+    if(isLinkConnectedToSelectedNode(link)){
+        const appearance=getLinkAppearance(link);
+        line.style.setProperty("--connected-link-width",String(Math.max(3,appearance.width+Math.min(1.5,appearance.width*.5))));
+        line.classList.add("connectedToSelectedNode");
+    }
+    if(selectedLink&&selectedLink.id===link.id) line.classList.add("selectedLink");
+}
+
 const links = DEFAULT_LINKS.map(normalizeLink);
 const annotations=[];
 
@@ -600,6 +617,79 @@ function processImageFile(file,maxWidth,maxHeight,quality=.82){
     });
 }
 
+function stopCameraStream(){
+    if(cameraStream) cameraStream.getTracks().forEach(track=>track.stop());
+    cameraStream=null;
+    const video=document.getElementById("cameraPreview");
+    if(video){video.pause?.();video.srcObject=null;}
+}
+
+function setCameraCaptureState(hasPhoto){
+    const video=document.getElementById("cameraPreview"),photo=document.getElementById("cameraPhotoPreview");
+    video.hidden=hasPhoto;photo.hidden=!hasPhoto;
+    document.getElementById("btnCapturePhoto").hidden=hasPhoto;
+    document.getElementById("btnUsePhoto").hidden=!hasPhoto;
+    document.getElementById("btnRetakePhoto").hidden=!hasPhoto;
+}
+
+function getCameraErrorMessage(error){
+    if(error?.name==="NotAllowedError"||error?.name==="SecurityError") return "Camera permission was denied. Please allow camera access in browser settings.";
+    if(error?.name==="NotFoundError"||error?.name==="OverconstrainedError") return "No camera was found on this device.";
+    if(error?.name==="NotReadableError"||error?.name==="AbortError") return "The camera is unavailable or already being used by another application.";
+    return "Camera access failed. Please check your camera and browser settings.";
+}
+
+async function openDeviceCamera(target){
+    if(!target||!nodes.includes(target)) return;
+    const modal=document.getElementById("cameraModal"),video=document.getElementById("cameraPreview"),photo=document.getElementById("cameraPhotoPreview"),status=document.getElementById("cameraStatus"),capture=document.getElementById("btnCapturePhoto");
+    stopCameraStream();
+    cameraTargetNode=target;capturedDevicePhotoData="";photo.removeAttribute("src");capture.disabled=true;setCameraCaptureState(false);status.textContent="Requesting camera permission...";modal.style.display="flex";
+    const session=++cameraSessionId;
+    if(!navigator.mediaDevices?.getUserMedia){status.textContent="Camera access is not supported by this browser.";return;}
+    if(window.isSecureContext===false){status.textContent="Camera access requires a secure HTTPS connection.";return;}
+    try{
+        const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}},audio:false});
+        if(session!==cameraSessionId||modal.style.display!=="flex"){stream.getTracks().forEach(track=>track.stop());return;}
+        cameraStream=stream;
+        const markReady=()=>{if(session!==cameraSessionId)return;capture.disabled=false;status.textContent="Camera ready. Position the device and capture the photo.";video.play().catch(()=>{});};
+        video.onloadedmetadata=markReady;video.srcObject=stream;if(video.readyState>=1)markReady();
+    }catch(error){
+        if(session!==cameraSessionId)return;
+        stopCameraStream();status.textContent=getCameraErrorMessage(error);capture.disabled=true;
+    }
+}
+
+function captureDevicePhoto(){
+    const video=document.getElementById("cameraPreview"),canvas=document.getElementById("cameraCaptureCanvas"),photo=document.getElementById("cameraPhotoPreview"),status=document.getElementById("cameraStatus");
+    if(!cameraStream||!video.videoWidth||!video.videoHeight){status.textContent="Camera preview is not ready yet.";return;}
+    const scale=Math.min(1,800/video.videoWidth,600/video.videoHeight);
+    canvas.width=Math.max(1,Math.round(video.videoWidth*scale));canvas.height=Math.max(1,Math.round(video.videoHeight*scale));
+    const context=canvas.getContext("2d");
+    if(!context){status.textContent="This browser cannot capture the camera image.";return;}
+    context.drawImage(video,0,0,canvas.width,canvas.height);
+    try{capturedDevicePhotoData=canvas.toDataURL("image/jpeg",.8);}catch(error){capturedDevicePhotoData="";status.textContent="The captured photo could not be processed.";return;}
+    if(!isSafeImageData(capturedDevicePhotoData)){capturedDevicePhotoData="";status.textContent="The captured photo could not be processed.";return;}
+    photo.src=capturedDevicePhotoData;setCameraCaptureState(true);status.textContent="Photo captured. Use it, retake it, or cancel without changing the existing picture.";
+}
+
+function retakeDevicePhoto(){
+    capturedDevicePhotoData="";document.getElementById("cameraPhotoPreview").removeAttribute("src");setCameraCaptureState(false);
+    document.getElementById("btnCapturePhoto").disabled=!cameraStream;document.getElementById("cameraStatus").textContent=cameraStream?"Camera ready. Capture a new photo.":"Camera is no longer available.";
+    document.getElementById("cameraPreview").play().catch(()=>{});
+}
+
+function closeDeviceCamera(restoreFocus=true){
+    cameraSessionId++;stopCameraStream();capturedDevicePhotoData="";cameraTargetNode=null;
+    const modal=document.getElementById("cameraModal"),photo=document.getElementById("cameraPhotoPreview");modal.style.display="none";photo.removeAttribute("src");setCameraCaptureState(false);
+    if(restoreFocus&&document.getElementById("btnTakePicture")) document.getElementById("btnTakePicture").focus();
+}
+
+function useCapturedDevicePhoto(){
+    const target=cameraTargetNode,data=capturedDevicePhotoData;
+    if(!target||!nodes.includes(target)||!isSafeImageData(data)){document.getElementById("cameraStatus").textContent="No captured photo is available.";return;}
+    recordHistory();target.pictureData=data;if(selectedNode===target)updateNodeMediaPreviews();saveToLocalStorage();closeDeviceCamera();showFeedback("Camera photo added to the device.",false);
+}
+
 function normalizeBackground(background){
     const value=background&&typeof background==="object"?background:{};
     const type=["theme","dark","light","color","image","transparent"].includes(value.type)?value.type:"theme";
@@ -812,7 +902,7 @@ function drawAnnotation(annotation){
         group.appendChild(text);
     }
     group.addEventListener("pointerdown",startAnnotationDrag);
-    group.addEventListener("click",event=>{event.stopPropagation();selectedNode=null;selectedLink=null;selectedAnnotation=annotation;showAnnotationProperties(annotation);group.classList.add("selectedAnnotation");});
+    group.addEventListener("click",event=>{event.stopPropagation();selectedNode=null;selectedLink=null;selectedAnnotation=annotation;drawLinksOnly();showAnnotationProperties(annotation);group.classList.add("selectedAnnotation");});
     group.addEventListener("dblclick",event=>{event.stopPropagation();if(annotation.type!=="text")return;const value=prompt("Edit text",annotation.text);if(value===null||!value.trim())return;recordHistory();annotation.text=value.trim().slice(0,500);render();showAnnotationProperties(annotation);saveToLocalStorage();});
     annotationsLayer.appendChild(group);
 }
@@ -1534,11 +1624,7 @@ function drawLinks(){
         line.dataset.to=link.to;
         applyLinkAppearance(line,link);
 
-        if(selectedLink && selectedLink.id===link.id){
-
-            line.classList.add("selectedLink");
-
-        }
+        applyLinkSelectionState(line,link);
 
         linksLayer.appendChild(hit);
         linksLayer.appendChild(line);
@@ -1688,6 +1774,7 @@ function selectNode(e){
     selectedNode=nodes.find(x=>x.id===id);
     selectedLink=null;
     selectedWaypointIndex=null;
+    drawLinksOnly();
 if(linkMode){
 
     if(firstLinkNode==null){
@@ -1849,7 +1936,7 @@ function updateNodeMediaPreviews(){
     if(selectedNode.iconType==="custom")setPreview(iconPreview,selectedNode.iconData,"Default icon");else setDefaultIconPreview(iconPreview,selectedNode);
     setPreview(document.getElementById("propPicturePreview"),selectedNode.pictureData,"No picture");
     document.getElementById("btnResetIcon").disabled=selectedNode.iconType!=="custom";
-    document.getElementById("btnChangePicture").textContent=selectedNode.pictureData?"Change Picture":"Add Picture";
+    document.getElementById("btnChangePicture").textContent=selectedNode.pictureData?"📁 Change from Computer":"📁 From Computer";
     document.getElementById("btnRemovePicture").disabled=!selectedNode.pictureData;
 }
 function setDefaultIconPreview(element,node){
@@ -2170,11 +2257,7 @@ function drawLinksOnly(){
         line.dataset.to=link.to;
         applyLinkAppearance(line,link);
 
-        if(selectedLink && selectedLink.id===link.id){
-
-            line.classList.add("selectedLink");
-
-        }
+        applyLinkSelectionState(line,link);
 
         linksLayer.appendChild(hit);
         linksLayer.appendChild(line);
@@ -2923,6 +3006,7 @@ const deviceModal=document.getElementById("deviceModal");
 const statusCheckModal=document.getElementById("statusCheckModal");
 const statusDeviceSearch=document.getElementById("statusDeviceSearch");
 const githubUpdateModal=document.getElementById("githubUpdateModal");
+const cameraModal=document.getElementById("cameraModal");
 const diagramSettingsModal=document.getElementById("diagramSettingsModal");
 const globalDeviceScaleInput=document.getElementById("globalDeviceScale");
 const defaultDeviceNameColorInput=document.getElementById("defaultDeviceNameColor");
@@ -3317,6 +3401,7 @@ document.getElementById("btnResetIcon").onclick=function(){
     if(!selectedNode||selectedNode.iconType!=="custom")return;recordHistory();selectedNode.iconType="default";selectedNode.iconData="";updateNodeMediaPreviews();render();saveToLocalStorage();
 };
 document.getElementById("btnChangePicture").onclick=()=>propPictureFile.click();
+document.getElementById("btnTakePicture").onclick=function(){if(selectedNode)openDeviceCamera(selectedNode);};
 propPictureFile.addEventListener("change",async function(){
     const file=this.files[0],target=selectedNode;this.value="";if(!file||!target)return;
     try{const data=await processImageFile(file,800,600,.8);if(!nodes.includes(target))return;recordHistory();target.pictureData=data;if(selectedNode===target)updateNodeMediaPreviews();saveToLocalStorage();}
@@ -3325,6 +3410,11 @@ propPictureFile.addEventListener("change",async function(){
 document.getElementById("btnRemovePicture").onclick=function(){
     if(!selectedNode||!selectedNode.pictureData)return;recordHistory();selectedNode.pictureData="";updateNodeMediaPreviews();saveToLocalStorage();
 };
+document.getElementById("btnCapturePhoto").onclick=captureDevicePhoto;
+document.getElementById("btnRetakePhoto").onclick=retakeDevicePhoto;
+document.getElementById("btnUsePhoto").onclick=useCapturedDevicePhoto;
+document.getElementById("btnCancelCamera").onclick=()=>closeDeviceCamera();
+window.addEventListener("pagehide",stopCameraStream);
 
 btnBackground.onclick=function(){
     backgroundType.value=diagramBackground.type;backgroundColor.value=diagramBackground.color;backgroundFit.value=diagramBackground.fit;
@@ -3379,6 +3469,7 @@ document.addEventListener("keydown",function(e){
 
     if(e.key==="Escape"){
         if(pendingAnnotation){pendingAnnotation=null;document.getElementById("statusBar").textContent="Ready";}
+        if(cameraModal.style.display==="flex"){closeDeviceCamera();return;}
         if(deviceModal.style.display==="flex"){deviceModal.style.display="none";btnAddDevice.focus();}
         if(backgroundModal.style.display==="flex"){backgroundModal.style.display="none";btnBackground.focus();}
         if(diagramSettingsModal.style.display==="flex"){diagramSettingsModal.style.display="none";btnDiagramSettings.focus();}
