@@ -9,6 +9,7 @@ import {
     signOut
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
 import {
+    Bytes,
     deleteField,
     deleteDoc,
     doc,
@@ -34,6 +35,7 @@ const DIAGRAM_ID="main";
 const AUTO_SAVE_DELAY=1500;
 const MAX_CHUNK_BYTES=650000;
 const MAX_CHUNK_COUNT=400;
+const MAX_PHOTO_BYTES=450000;
 const CHANGE_EVENT="hotel-network-diagram-change";
 const bridge=window.hotelNetworkDiagramCloudBridge;
 
@@ -58,6 +60,7 @@ let diagramReady=false;
 let diagramExists=false;
 let knownRevision=null;
 let knownChunkCount=0;
+let knownPhotoIds=new Set();
 let saveTimer=null;
 let saveRunning=false;
 let saveQueued=false;
@@ -102,15 +105,20 @@ function setUserDisplay(user){
 userPhoto.addEventListener("error",()=>{userPhoto.hidden=true;userInitial.hidden=false;});
 
 function showLogin(message="Sign in dengan akun Google untuk membuka diagram Anda."){
-    authGate.hidden=false;accountPanel.hidden=true;signInButton.hidden=false;signInButton.disabled=false;localModeButton.hidden=true;authMessage.textContent=message;
+    document.body.classList.remove("authenticated");document.getElementById("btnMenuToggle").hidden=true;closeToolbarMenu();authGate.hidden=false;accountPanel.hidden=true;signInButton.hidden=false;signInButton.disabled=false;localModeButton.hidden=true;authMessage.textContent=message;
 }
 
 function showAuthenticatedApp(user){
-    setUserDisplay(user);accountPanel.hidden=false;authGate.hidden=true;
+    setUserDisplay(user);accountPanel.hidden=false;document.body.classList.add("authenticated");document.getElementById("btnMenuToggle").hidden=false;authGate.hidden=true;
 }
 
 function showFirebaseFailure(message){
-    authGate.hidden=false;accountPanel.hidden=true;signInButton.hidden=true;localModeButton.hidden=false;authMessage.textContent=message;
+    document.body.classList.remove("authenticated");document.getElementById("btnMenuToggle").hidden=true;closeToolbarMenu();authGate.hidden=false;accountPanel.hidden=true;signInButton.hidden=true;localModeButton.hidden=false;authMessage.textContent=message;
+}
+
+function closeToolbarMenu(){
+    const menu=document.getElementById("toolbarMenu"),toggle=document.getElementById("btnMenuToggle");
+    menu?.classList.remove("open");toggle?.setAttribute("aria-expanded","false");toggle?.setAttribute("aria-label","Open tools menu");
 }
 
 function chunkUtf8String(value,maxBytes=MAX_CHUNK_BYTES){
@@ -137,6 +145,58 @@ function hashString(value){
 function getDiagramRef(uid){return doc(db,"users",uid,"diagrams",DIAGRAM_ID);}
 function getChunkId(revision,index){return revision?`${revision}_${String(index).padStart(4,"0")}`:String(index).padStart(4,"0");}
 function getChunkRef(uid,revision,index){return doc(db,"users",uid,"diagrams",DIAGRAM_ID,"chunks",getChunkId(revision,index));}
+function getPhotoRef(uid,photoId){return doc(db,"users",uid,"diagrams",DIAGRAM_ID,"photos",photoId);}
+
+function parseImageDataUrl(value){
+    const match=typeof value==="string"?value.match(/^data:(image\/(?:png|jpeg|webp));base64,([a-z0-9+/=]+)$/i):null;
+    return match?{mimeType:match[1].toLowerCase(),base64:match[2]}:null;
+}
+
+function getBase64ByteLength(value){return Math.max(0,Math.floor(value.length*3/4)-(value.endsWith("==")?2:value.endsWith("=")?1:0));}
+
+function prepareCloudDiagram(diagramData){
+    const photos=[];
+    const cloudData={...diagramData,nodes:(Array.isArray(diagramData.nodes)?diagramData.nodes:[]).map(node=>{
+        const {pictureData,...cloudNode}=node;
+        const parsed=parseImageDataUrl(pictureData);
+        if(!parsed)return cloudNode;
+        const byteLength=getBase64ByteLength(parsed.base64);
+        if(byteLength>MAX_PHOTO_BYTES)throw new Error("Foto device lama terlalu besar untuk Firestore. Pilih ulang foto agar dikompres otomatis.");
+        const hash=hashString(parsed.base64),id=`device-${hashString(String(node.id||"device"))}-${hash}`;
+        photos.push({id,hash,mimeType:parsed.mimeType,byteLength,data:Bytes.fromBase64String(parsed.base64)});
+        return{...cloudNode,pictureId:id,pictureHash:hash};
+    })};
+    return{cloudData,photos};
+}
+
+function getCachedPictureMap(user){
+    const map=new Map();
+    const candidates=[bridge.getUserLocalCache(user.uid),bridge.getLegacyLocalCache(user.uid)].filter(Boolean);
+    for(const cached of candidates){
+        try{
+            const layout=typeof cached==="string"?JSON.parse(cached):cached;
+            (Array.isArray(layout?.nodes)?layout.nodes:[]).forEach(node=>{const parsed=parseImageDataUrl(node.pictureData);if(parsed&&!map.has(node.id))map.set(node.id,{data:node.pictureData,hash:hashString(parsed.base64)});});
+        }catch(error){console.warn("Ignoring an invalid cached photo source",error);}
+    }
+    return map;
+}
+
+async function hydrateCloudDiagram(serialized,user,metadata){
+    const layout=typeof serialized==="string"?JSON.parse(serialized):serialized;
+    const cachedPictures=getCachedPictureMap(user),referencedIds=new Set();
+    await runLimited((Array.isArray(layout?.nodes)?layout.nodes:[]).map(node=>async()=>{
+        if(!node.pictureId||!node.pictureHash)return;
+        referencedIds.add(node.pictureId);
+        const cached=cachedPictures.get(node.id);
+        if(cached?.hash===node.pictureHash){node.pictureData=cached.data;return;}
+        const snapshot=await getDoc(getPhotoRef(user.uid,node.pictureId));
+        if(!snapshot.exists())return;
+        const photo=snapshot.data()||{},mimeType=/^image\/(png|jpeg|webp)$/i.test(photo.mimeType)?photo.mimeType:"image/webp";
+        if(photo.data&&typeof photo.data.toBase64==="function")node.pictureData=`data:${mimeType};base64,${photo.data.toBase64()}`;
+    }));
+    knownPhotoIds=new Set(Array.isArray(metadata.photoIds)?metadata.photoIds.filter(id=>typeof id==="string"):referencedIds);
+    return layout;
+}
 
 async function runLimited(tasks,limit=6){
     for(let index=0;index<tasks.length;index+=limit)await Promise.all(tasks.slice(index,index+limit).map(task=>task()));
@@ -161,13 +221,15 @@ async function loadCloudDiagram(user){
     if(!snapshot.exists())return false;
     const metadata=snapshot.data()||{};
     diagramExists=true;knownRevision=typeof metadata.revision==="string"?metadata.revision:null;knownChunkCount=Number(metadata.chunkCount)||0;
-    if(metadata.diagramData){bridge.loadDiagramData(metadata.diagramData);return true;}
-    if(!Number.isInteger(knownChunkCount)||knownChunkCount<1||knownChunkCount>MAX_CHUNK_COUNT)throw new Error("Metadata chunk diagram tidak valid.");
-    const snapshots=await Promise.all(Array.from({length:knownChunkCount},(_,index)=>getDoc(getChunkRef(user.uid,knownRevision,index))));
-    if(snapshots.some(item=>!item.exists()))throw new Error("Sebagian data diagram cloud tidak ditemukan.");
-    const serialized=snapshots.map(item=>String(item.data()?.data||"")).join("");
-    if(metadata.checksum&&metadata.checksum!==hashString(serialized))throw new Error("Data diagram cloud tidak lengkap atau rusak.");
-    bridge.loadDiagramData(serialized);
+    let serialized=metadata.diagramData||null;
+    if(!serialized){
+        if(!Number.isInteger(knownChunkCount)||knownChunkCount<1||knownChunkCount>MAX_CHUNK_COUNT)throw new Error("Metadata chunk diagram tidak valid.");
+        const snapshots=await Promise.all(Array.from({length:knownChunkCount},(_,index)=>getDoc(getChunkRef(user.uid,knownRevision,index))));
+        if(snapshots.some(item=>!item.exists()))throw new Error("Sebagian data diagram cloud tidak ditemukan.");
+        serialized=snapshots.map(item=>String(item.data()?.data||"")).join("");
+        if(metadata.checksum&&metadata.checksum!==hashString(serialized))throw new Error("Data diagram cloud tidak lengkap atau rusak.");
+    }
+    bridge.loadDiagramData(await hydrateCloudDiagram(serialized,user,metadata));
     return true;
 }
 
@@ -195,28 +257,35 @@ async function saveNow({manual=false}={}){
     saveRunning=true;saveCloudButton.disabled=true;setSaveStatus("Saving…","unsaved");
     const savingUser=currentUser;
     const previousRevision=knownRevision;
-    const previousChunkCount=knownChunkCount;
+    const previousChunkCount=knownChunkCount,previousPhotoIds=new Set(knownPhotoIds);
     let newRevision=null;
     let newChunkCount=0;
+    const writtenPhotoIds=[];
     try{
         const diagramData=bridge.getDiagramData();
-        const serialized=JSON.stringify(diagramData);
+        const {cloudData,photos}=prepareCloudDiagram(diagramData);
+        const serialized=JSON.stringify(cloudData);
         const chunks=chunkUtf8String(serialized);
         if(chunks.length>MAX_CHUNK_COUNT)throw new Error("Diagram terlalu besar untuk penyimpanan cloud.");
         newRevision=`${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
         newChunkCount=chunks.length;
+        await runLimited(photos.filter(photo=>!knownPhotoIds.has(photo.id)).map(photo=>async()=>{await setDoc(getPhotoRef(savingUser.uid,photo.id),{data:photo.data,mimeType:photo.mimeType,byteLength:photo.byteLength,hash:photo.hash,updatedAt:serverTimestamp(),updatedBy:savingUser.uid});writtenPhotoIds.push(photo.id);}));
         await runLimited(chunks.map((data,index)=>()=>setDoc(getChunkRef(savingUser.uid,newRevision,index),{revision:newRevision,index,data})));
         if(currentUser?.uid!==savingUser.uid)throw new Error("Sesi pengguna berubah saat menyimpan.");
-        const metadata={name:String(diagramData.diagramName||"HOTEL NETWORK DIAGRAM").slice(0,80),encoding:"json-utf8-chunks-v1",schemaVersion:1,revision:newRevision,chunkCount:chunks.length,byteLength:new TextEncoder().encode(serialized).length,checksum:hashString(serialized),updatedAt:serverTimestamp(),updatedBy:savingUser.uid};
+        const nextPhotoIds=photos.map(photo=>photo.id);
+        const metadata={name:String(cloudData.diagramName||"HOTEL NETWORK DIAGRAM").slice(0,80),encoding:"json-utf8-chunks-v1",schemaVersion:2,revision:newRevision,chunkCount:chunks.length,photoIds:nextPhotoIds,byteLength:new TextEncoder().encode(serialized).length,checksum:hashString(serialized),updatedAt:serverTimestamp(),updatedBy:savingUser.uid};
         if(diagramExists)metadata.diagramData=deleteField();
         else metadata.createdAt=serverTimestamp();
         await setDoc(getDiagramRef(savingUser.uid),metadata,{merge:true});
-        diagramExists=true;knownRevision=newRevision;knownChunkCount=chunks.length;
+        diagramExists=true;knownRevision=newRevision;knownChunkCount=chunks.length;knownPhotoIds=new Set(nextPhotoIds);
         setSaveStatus(`✓ Saved ${formatTime()}`,"saved");
         if(previousChunkCount&&previousRevision!==newRevision)deleteChunks(savingUser.uid,previousRevision,previousChunkCount).catch(error=>console.warn("Old diagram chunks could not be removed",error));
+        const stalePhotoIds=[...previousPhotoIds].filter(id=>!knownPhotoIds.has(id));
+        if(stalePhotoIds.length)runLimited(stalePhotoIds.map(id=>()=>deleteDoc(getPhotoRef(savingUser.uid,id)))).catch(error=>console.warn("Old device photos could not be removed",error));
     }catch(error){
         console.error("Cloud save failed",error);setSaveStatus("⚠ Save failed","error");bridge.showFeedback(getCloudErrorMessage(error),true);
         if(newRevision&&newChunkCount)deleteChunks(savingUser.uid,newRevision,newChunkCount).catch(()=>{});
+        if(writtenPhotoIds.length)runLimited(writtenPhotoIds.filter(id=>!previousPhotoIds.has(id)).map(id=>()=>deleteDoc(getPhotoRef(savingUser.uid,id)))).catch(()=>{});
     }finally{
         saveRunning=false;saveCloudButton.disabled=false;
         if(saveQueued){saveQueued=false;scheduleCloudSave();}
@@ -224,7 +293,7 @@ async function saveNow({manual=false}={}){
 }
 
 async function handleAuthenticatedUser(user,generation){
-    currentUser=user;diagramReady=false;diagramExists=false;knownRevision=null;knownChunkCount=0;
+    currentUser=user;diagramReady=false;diagramExists=false;knownRevision=null;knownChunkCount=0;knownPhotoIds=new Set();
     bridge.setStorageUser(user.uid);setUserDisplay(user);authMessage.textContent="Memuat diagram Anda...";signInButton.disabled=true;
     let cloudLoaded=false;
     let cloudError=null;
@@ -241,7 +310,7 @@ async function handleAuthenticatedUser(user,generation){
 async function handleAuthState(user){
     const generation=++authGeneration;
     clearTimeout(saveTimer);saveTimer=null;saveQueued=false;diagramReady=false;
-    if(!user){currentUser=null;bridge.setStorageUser(null);showLogin();return;}
+    if(!user){currentUser=null;knownPhotoIds=new Set();bridge.setStorageUser(null);showLogin();return;}
     await handleAuthenticatedUser(user,generation);
 }
 
