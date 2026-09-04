@@ -8,7 +8,7 @@
 
 <title>Hotel Network Diagram</title>
 
-<link rel="stylesheet" href="style.css?v=20260904-4">
+<link rel="stylesheet" href="style.css?v=20260904-5">
 
 </head>
 <body>
@@ -47,10 +47,13 @@
         </div>
 
         <button id="btnModeToggle" class="modeToggle" type="button" aria-pressed="false">🔒 Read Mode</button>
+        <button id="btnNewDiagram" type="button">＋ New</button>
+        <button id="btnSharePublish" type="button">↗ Share / Publish</button>
+        <button id="btnSyncMerge" type="button">⇄ Sync / Merge</button>
 
-        <button id="btnOpen">📂 Load JSON</button>
+        <button id="btnOpen">📂 Import / Load JSON</button>
 
-<button id="btnSave">💾 Save JSON</button>
+<button id="btnSave">💾 Export / Save JSON</button>
 
         <button id="btnOpenMain">🔄 Update from GitHub</button>
 
@@ -227,6 +230,10 @@
             <label for="propIP">IP Address</label>
 
             <input id="propIP">
+
+            <label for="propMAC">MAC Address</label>
+
+            <input id="propMAC" maxlength="17" placeholder="00:11:22:33:44:55">
 
             <label for="propModel">Model</label>
 
@@ -484,6 +491,40 @@
     </div>
 </div>
 
+<div id="sharePublishModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="sharePublishTitle">
+    <div class="modalContent collaborationContent">
+        <h2 id="sharePublishTitle">Share / Publish</h2>
+        <p>Publish perubahan diagram agar user tertentu dapat meninjaunya dan memilih perubahan untuk di-merge. Diagram pribadi Anda tetap tidak dapat diedit oleh user lain.</p>
+        <label for="shareRecipients">Email Google atau Firebase UID penerima</label>
+        <textarea id="shareRecipients" rows="4" placeholder="user@example.com&#10;atau Firebase UID"></textarea>
+        <small>Pisahkan beberapa penerima dengan baris baru atau koma. UID tetap menjadi identifier internal.</small>
+        <div id="sharePublishStatus" class="syncStatusCard" role="status" aria-live="polite">Belum dipublish.</div>
+        <div class="modalActions">
+            <button id="btnCloseSharePublish" type="button">Cancel</button>
+            <button id="btnConfirmSharePublish" type="button">Share / Publish</button>
+        </div>
+    </div>
+</div>
+
+<div id="syncMergeModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="syncMergeTitle">
+    <div class="modalContent collaborationContent syncMergeContent">
+        <h2 id="syncMergeTitle">Sync / Merge Changes</h2>
+        <label for="syncSourceSelect">Published diagram</label>
+        <select id="syncSourceSelect"><option>Loading shared diagrams…</option></select>
+        <div id="syncVersionStatus" class="syncStatusCard" role="status" aria-live="polite">Choose a published diagram.</div>
+        <div class="syncToolbar">
+            <button id="btnRefreshSync" type="button">Refresh Changes</button>
+            <label><input id="syncSelectAll" type="checkbox" checked> Select all non-conflicts</label>
+        </div>
+        <div id="syncChangesList" class="syncChangesList"><p class="syncEmpty">No changes loaded.</p></div>
+        <div class="modalActions syncActions">
+            <button id="btnCloseSyncMerge" type="button">Cancel</button>
+            <button id="btnSyncSelected" type="button">Sync Selected</button>
+            <button id="btnSyncAll" type="button">Sync All</button>
+        </div>
+    </div>
+</div>
+
 <div id="diagramSettingsModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="diagramSettingsModalTitle">
     <div class="modalContent settingsContent">
         <h2 id="diagramSettingsModalTitle">Device Settings</h2>
@@ -567,8 +608,8 @@
 
 </div>
 
-<script src="app.js?v=20260904-4"></script>
-<script type="module" src="firebase.js?v=20260904-4"></script>
+<script src="app.js?v=20260904-5"></script>
+<script type="module" src="firebase.js?v=20260904-5"></script>
 </body>
 
 </html>

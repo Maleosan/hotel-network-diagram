@@ -10,13 +10,18 @@ import {
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
 import {
     Bytes,
+    collection,
     deleteField,
     deleteDoc,
     doc,
     getDoc,
+    getDocs,
     getFirestore,
+    orderBy,
+    query,
     serverTimestamp,
-    setDoc
+    setDoc,
+    where
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 
 window.hotelFirebaseStarted=true;
@@ -38,6 +43,7 @@ const MAX_CHUNK_COUNT=400;
 const MAX_PHOTO_BYTES=450000;
 const PHOTO_VERIFICATION_TTL=7*24*60*60*1000;
 const PHOTO_VERIFICATION_CACHE_PREFIX="hotelNetworkDiagram.photoVerification.";
+const PUBLICATION_COLLECTION="publishedDiagrams";
 const CHANGE_EVENT="hotel-network-diagram-change";
 const bridge=window.hotelNetworkDiagramCloudBridge;
 
@@ -53,6 +59,15 @@ const userPhoto=document.getElementById("cloudUserPhoto");
 const userInitial=document.getElementById("cloudUserInitial");
 const userName=document.getElementById("cloudUserName");
 const userEmail=document.getElementById("cloudUserEmail");
+const shareButton=document.getElementById("btnSharePublish");
+const syncButton=document.getElementById("btnSyncMerge");
+const shareModal=document.getElementById("sharePublishModal");
+const syncModal=document.getElementById("syncMergeModal");
+const shareRecipients=document.getElementById("shareRecipients");
+const shareStatus=document.getElementById("sharePublishStatus");
+const syncSourceSelect=document.getElementById("syncSourceSelect");
+const syncVersionStatus=document.getElementById("syncVersionStatus");
+const syncChangesList=document.getElementById("syncChangesList");
 
 let auth=null;
 let db=null;
@@ -62,12 +77,17 @@ let diagramReady=false;
 let diagramExists=false;
 let knownRevision=null;
 let knownChunkCount=0;
+let knownVersion=0;
 let knownPhotoIds=new Set();
 let verifiedPhotoIds=new Set();
 let photoLoadFailures=0;
+let lastSavedCloudData=null;
+let loadedSyncChanges=[];
+let loadedSyncState=null;
 let saveTimer=null;
 let saveRunning=false;
 let saveQueued=false;
+let lastSaveError=null;
 let authGeneration=0;
 
 function setSaveStatus(message,state=""){
@@ -150,6 +170,55 @@ function getDiagramRef(uid){return doc(db,"users",uid,"diagrams",DIAGRAM_ID);}
 function getChunkId(revision,index){return revision?`${revision}_${String(index).padStart(4,"0")}`:String(index).padStart(4,"0");}
 function getChunkRef(uid,revision,index){return doc(db,"users",uid,"diagrams",DIAGRAM_ID,"chunks",getChunkId(revision,index));}
 function getPhotoRef(uid,photoId){return doc(db,"users",uid,"diagrams",DIAGRAM_ID,"photos",photoId);}
+function getPrivateChangeRef(uid,changeId){return doc(db,"users",uid,"diagrams",DIAGRAM_ID,"changes",changeId);}
+function getSyncStateRef(uid,publicationId){return doc(db,"users",uid,"diagrams",DIAGRAM_ID,"syncStates",publicationId);}
+function getPublicationId(uid){return `pub-${uid}-${DIAGRAM_ID}`;}
+function getPublicationRef(publicationId){return doc(db,PUBLICATION_COLLECTION,publicationId);}
+function getPublishedChangeRef(publicationId,changeId){return doc(db,PUBLICATION_COLLECTION,publicationId,"changes",changeId);}
+function getPublishedPhotoRef(publicationId,photoId){return doc(db,PUBLICATION_COLLECTION,publicationId,"photos",photoId);}
+
+function cloneValue(value){
+    if(value===undefined)return null;
+    return JSON.parse(JSON.stringify(value));
+}
+
+function valuesEqual(a,b){return JSON.stringify(a===undefined?null:a)===JSON.stringify(b===undefined?null:b);}
+
+function createChangeRecord({version,previousVersion,targetType,targetId,targetLabel,operation,field,before,after,index,userId}){
+    const changeId=`v${String(version).padStart(10,"0")}-${hashString(`${targetType}|${targetId}|${field}|${index}`)}`;
+    return{changeId,userId,ownerId:userId,diagramId:DIAGRAM_ID,targetType,targetId:String(targetId),targetLabel:String(targetLabel||targetId).slice(0,120),operation,field,changedFields:[{field,before:cloneValue(before),after:cloneValue(after)}],previousVersion,newVersion:version,timestamp:serverTimestamp()};
+}
+
+function buildChangeRecords(previous,next,previousVersion,newVersion,userId){
+    const changes=[];
+    const push=(record)=>changes.push(createChangeRecord({...record,version:newVersion,previousVersion,index:changes.length,userId}));
+    const groups=[
+        ["device","nodes",item=>item.text||item.id],
+        ["connection","links",item=>item.label||`${item.from||"?"} → ${item.to||"?"}`],
+        ["annotation","annotations",item=>item.text||item.id]
+    ];
+    for(const [targetType,key,getLabel] of groups){
+        const beforeMap=new Map((Array.isArray(previous?.[key])?previous[key]:[]).map(item=>[String(item.id),item]));
+        const afterMap=new Map((Array.isArray(next?.[key])?next[key]:[]).map(item=>[String(item.id),item]));
+        for(const [id,item] of afterMap){
+            const old=beforeMap.get(id);
+            if(!old){push({targetType,targetId:id,targetLabel:getLabel(item),operation:"create",field:"$entity",before:null,after:item});continue;}
+            const fields=new Set([...Object.keys(old),...Object.keys(item)]);
+            fields.delete("pictureData");
+            if(targetType==="device"&&!valuesEqual({x:old.x,y:old.y},{x:item.x,y:item.y})){
+                push({targetType,targetId:id,targetLabel:getLabel(item),operation:"update",field:"position",before:{x:old.x,y:old.y},after:{x:item.x,y:item.y}});fields.delete("x");fields.delete("y");
+            }
+            if(targetType==="device"&&!valuesEqual({pictureId:old.pictureId||null,pictureHash:old.pictureHash||null},{pictureId:item.pictureId||null,pictureHash:item.pictureHash||null})){
+                push({targetType,targetId:id,targetLabel:getLabel(item),operation:"update",field:"image",before:{pictureId:old.pictureId||null,pictureHash:old.pictureHash||null},after:{pictureId:item.pictureId||null,pictureHash:item.pictureHash||null}});fields.delete("pictureId");fields.delete("pictureHash");
+            }
+            for(const field of fields)if(!valuesEqual(old[field],item[field]))push({targetType,targetId:id,targetLabel:getLabel(item),operation:"update",field,before:old[field],after:item[field]});
+        }
+        for(const [id,item] of beforeMap)if(!afterMap.has(id))push({targetType,targetId:id,targetLabel:getLabel(item),operation:"delete",field:"$entity",before:item,after:null});
+    }
+    const configFields=["diagramName","theme","gridEnabled","snapEnabled","background","globalDeviceScale","defaultDeviceNameColor","globalStatusTextSize","statusSummaryTypes"];
+    for(const field of configFields)if(!valuesEqual(previous?.[field],next?.[field]))push({targetType:"diagram",targetId:DIAGRAM_ID,targetLabel:"Diagram settings",operation:"update",field,before:previous?.[field],after:next?.[field]});
+    return changes;
+}
 
 function parseImageDataUrl(value){
     const match=typeof value==="string"?value.match(/^data:(image\/(?:png|jpeg|webp));base64,([a-z0-9+/=]+)$/i):null;
@@ -293,7 +362,7 @@ async function loadCloudDiagram(user){
     const snapshot=await getDoc(getDiagramRef(user.uid));
     if(!snapshot.exists())return false;
     const metadata=snapshot.data()||{};
-    diagramExists=true;knownRevision=typeof metadata.revision==="string"?metadata.revision:null;knownChunkCount=Number(metadata.chunkCount)||0;
+    diagramExists=true;knownRevision=typeof metadata.revision==="string"?metadata.revision:null;knownChunkCount=Number(metadata.chunkCount)||0;knownVersion=Math.max(0,Number(metadata.version)||0);
     let serialized=metadata.diagramData||null;
     if(!serialized){
         if(!Number.isInteger(knownChunkCount)||knownChunkCount<1||knownChunkCount>MAX_CHUNK_COUNT)throw new Error("Metadata chunk diagram tidak valid.");
@@ -302,7 +371,9 @@ async function loadCloudDiagram(user){
         serialized=snapshots.map(item=>String(item.data()?.data||"")).join("");
         if(metadata.checksum&&metadata.checksum!==hashString(serialized))throw new Error("Data diagram cloud tidak lengkap atau rusak.");
     }
-    bridge.loadDiagramData(await hydrateCloudDiagram(serialized,user,metadata));
+    const cloudLayout=typeof serialized==="string"?JSON.parse(serialized):serialized;
+    lastSavedCloudData=cloneValue(cloudLayout);
+    bridge.loadDiagramData(await hydrateCloudDiagram(cloneValue(cloudLayout),user,metadata));
     return true;
 }
 
@@ -324,19 +395,24 @@ function scheduleCloudSave(){
 
 async function saveNow({manual=false}={}){
     if(!currentUser||!diagramReady){if(manual)setSaveStatus("Cloud belum siap","error");return;}
-    if(navigator.onLine===false){setSaveStatus("⚠ Save failed","error");bridge.showFeedback("Tidak ada koneksi internet. Diagram tetap tersimpan di browser dan akan dicoba lagi saat online.",true);return;}
+    if(navigator.onLine===false){lastSaveError=new Error("Tidak ada koneksi internet.");setSaveStatus("⚠ Save failed","error");bridge.showFeedback("Tidak ada koneksi internet. Diagram tetap tersimpan di browser dan akan dicoba lagi saat online.",true);return;}
     clearTimeout(saveTimer);saveTimer=null;
     if(saveRunning){saveQueued=true;return;}
-    saveRunning=true;saveCloudButton.disabled=true;setSaveStatus("Saving…","unsaved");
+    saveRunning=true;lastSaveError=null;saveCloudButton.disabled=true;setSaveStatus("Saving…","unsaved");
     const savingUser=currentUser;
     const previousRevision=knownRevision;
     const previousChunkCount=knownChunkCount,previousPhotoIds=new Set(knownPhotoIds);
+    const previousVersion=knownVersion;
+    let newVersion=knownVersion+1;
     let newRevision=null;
     let newChunkCount=0;
     const writtenPhotoIds=[];
+    const writtenChangeIds=[];
     try{
         const diagramData=bridge.getDiagramData();
         const {cloudData,photos}=prepareCloudDiagram(diagramData);
+        const changes=buildChangeRecords(knownVersion===0?null:lastSavedCloudData,cloudData,previousVersion,newVersion,savingUser.uid);
+        if(!changes.length)newVersion=knownVersion;
         const serialized=JSON.stringify(cloudData);
         const chunks=chunkUtf8String(serialized);
         if(chunks.length>MAX_CHUNK_COUNT)throw new Error("Diagram terlalu besar untuk penyimpanan cloud.");
@@ -346,30 +422,254 @@ async function saveNow({manual=false}={}){
             const result=await ensurePhotoDocument(savingUser.uid,photo);
             if(result.written)writtenPhotoIds.push(photo.id);
         }));
+        await runLimited(changes.map(change=>async()=>{await setDoc(getPrivateChangeRef(savingUser.uid,change.changeId),change);writtenChangeIds.push(change.changeId);}));
         await runLimited(chunks.map((data,index)=>()=>setDoc(getChunkRef(savingUser.uid,newRevision,index),{revision:newRevision,index,data})));
         if(currentUser?.uid!==savingUser.uid)throw new Error("Sesi pengguna berubah saat menyimpan.");
         const nextPhotoIds=photos.map(photo=>photo.id);
-        const metadata={name:String(cloudData.diagramName||"HOTEL NETWORK DIAGRAM").slice(0,80),encoding:"json-utf8-chunks-v1",schemaVersion:2,revision:newRevision,chunkCount:chunks.length,photoIds:nextPhotoIds,byteLength:new TextEncoder().encode(serialized).length,checksum:hashString(serialized),updatedAt:serverTimestamp(),updatedBy:savingUser.uid};
+        const metadata={name:String(cloudData.diagramName||"HOTEL NETWORK DIAGRAM").slice(0,80),encoding:"json-utf8-chunks-v1",schemaVersion:3,version:newVersion,revision:newRevision,chunkCount:chunks.length,photoIds:nextPhotoIds,byteLength:new TextEncoder().encode(serialized).length,checksum:hashString(serialized),updatedAt:serverTimestamp(),updatedBy:savingUser.uid};
         if(diagramExists)metadata.diagramData=deleteField();
         else metadata.createdAt=serverTimestamp();
         await setDoc(getDiagramRef(savingUser.uid),metadata,{merge:true});
-        diagramExists=true;knownRevision=newRevision;knownChunkCount=chunks.length;knownPhotoIds=new Set(nextPhotoIds);verifiedPhotoIds=new Set(nextPhotoIds);
+        diagramExists=true;knownRevision=newRevision;knownChunkCount=chunks.length;knownVersion=newVersion;knownPhotoIds=new Set(nextPhotoIds);verifiedPhotoIds=new Set(nextPhotoIds);lastSavedCloudData=cloneValue(cloudData);
         setSaveStatus(`✓ Saved ${formatTime()}`,"saved");
         if(previousChunkCount&&previousRevision!==newRevision)deleteChunks(savingUser.uid,previousRevision,previousChunkCount).catch(error=>console.warn("Old diagram chunks could not be removed",error));
         const stalePhotoIds=[...previousPhotoIds].filter(id=>!knownPhotoIds.has(id));
         if(stalePhotoIds.length)runLimited(stalePhotoIds.map(id=>()=>deleteDoc(getPhotoRef(savingUser.uid,id)))).catch(error=>console.warn("Old device photos could not be removed",error));
     }catch(error){
+        lastSaveError=error;
         console.error("Cloud save failed",error);setSaveStatus("⚠ Save failed","error");bridge.showFeedback(getCloudErrorMessage(error),true);
         if(newRevision&&newChunkCount)deleteChunks(savingUser.uid,newRevision,newChunkCount).catch(()=>{});
         if(writtenPhotoIds.length)runLimited(writtenPhotoIds.filter(id=>!previousPhotoIds.has(id)).map(id=>()=>deleteDoc(getPhotoRef(savingUser.uid,id)))).catch(()=>{});
+        if(writtenChangeIds.length)runLimited(writtenChangeIds.map(id=>()=>deleteDoc(getPrivateChangeRef(savingUser.uid,id)))).catch(()=>{});
     }finally{
         saveRunning=false;saveCloudButton.disabled=false;
         if(saveQueued){saveQueued=false;scheduleCloudSave();}
     }
 }
 
+function waitForSaveIdle(timeout=15000){
+    const started=Date.now();
+    return new Promise((resolve,reject)=>{const check=()=>{if(!saveRunning){resolve();return;}if(Date.now()-started>timeout){reject(new Error("Save sebelumnya belum selesai."));return;}setTimeout(check,100);};check();});
+}
+
+function parseShareRecipients(value){
+    const emails=[],userIds=[];
+    String(value||"").split(/[\n,;]+/).map(item=>item.trim()).filter(Boolean).forEach(item=>{
+        if(item.includes("@")){const email=item.toLowerCase();if(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)&&!emails.includes(email))emails.push(email);}
+        else if(/^[a-z0-9_-]{8,128}$/i.test(item)&&!userIds.includes(item))userIds.push(item);
+    });
+    return{emails:emails.slice(0,40),userIds:userIds.slice(0,40)};
+}
+
+async function getPrivateChangesSince(uid,version){
+    const snapshot=await getDocs(query(collection(db,"users",uid,"diagrams",DIAGRAM_ID,"changes"),where("newVersion",">",version),orderBy("newVersion")));
+    return snapshot.docs.map(item=>item.data()).sort((a,b)=>a.newVersion-b.newVersion||String(a.changeId).localeCompare(String(b.changeId)));
+}
+
+function getPhotoIdsFromChanges(changes){
+    const ids=new Set();
+    changes.forEach(change=>{
+        const entry=change.changedFields?.[0];
+        if(change.field==="image"&&typeof entry?.after?.pictureId==="string")ids.add(entry.after.pictureId);
+        if(change.field==="$entity"&&typeof entry?.after?.pictureId==="string")ids.add(entry.after.pictureId);
+    });
+    return ids;
+}
+
+async function publishDiagram(){
+    if(!currentUser||!diagramReady)throw new Error("Login Google diperlukan untuk Share / Publish.");
+    const recipients=parseShareRecipients(shareRecipients.value);
+    if(!recipients.emails.length&&!recipients.userIds.length)throw new Error("Masukkan minimal satu email Google atau Firebase UID penerima.");
+    await waitForSaveIdle();await saveNow({manual:true});await waitForSaveIdle();if(lastSaveError)throw lastSaveError;
+    const publicationId=getPublicationId(currentUser.uid),reference=getPublicationRef(publicationId),existingSnapshot=await getDoc(reference),existing=existingSnapshot.exists()?existingSnapshot.data():null;
+    const publishedVersion=Math.max(0,Number(existing?.latestVersion)||0);
+    const changes=existing?(await getPrivateChangesSince(currentUser.uid,publishedVersion)).filter(change=>change.newVersion<=knownVersion):buildChangeRecords(null,lastSavedCloudData,0,knownVersion,currentUser.uid);
+    const publicationBase={ownerId:currentUser.uid,ownerName:currentUser.displayName||"Google User",ownerEmail:(currentUser.email||"").toLowerCase(),diagramId:DIAGRAM_ID,name:String(lastSavedCloudData?.diagramName||"HOTEL NETWORK DIAGRAM").slice(0,80),allowedEmails:recipients.emails,allowedUserIds:recipients.userIds};
+    await setDoc(reference,{...publicationBase,latestVersion:publishedVersion,updatedAt:serverTimestamp(),createdAt:existing?.createdAt||serverTimestamp()},{merge:true});
+    await runLimited(changes.map(change=>()=>setDoc(getPublishedChangeRef(publicationId,change.changeId),{...change,publishedAt:serverTimestamp()})));
+    await runLimited([...getPhotoIdsFromChanges(changes)].map(photoId=>async()=>{
+        const source=await getDoc(getPhotoRef(currentUser.uid,photoId));
+        if(!source.exists())throw new Error(`Foto ${photoId} belum tersedia di cloud. Klik Save to Cloud lalu coba publish lagi.`);
+        await setDoc(getPublishedPhotoRef(publicationId,photoId),{...source.data(),ownerId:currentUser.uid,publishedAt:serverTimestamp()});
+    }));
+    await setDoc(reference,{...publicationBase,latestVersion:knownVersion,updatedAt:serverTimestamp()},{merge:true});
+    shareStatus.textContent=`✓ Published v${knownVersion} · ${changes.length} field change(s) · ${recipients.emails.length+recipients.userIds.length} recipient(s)`;
+    bridge.showFeedback(`Diagram published at version ${knownVersion}.`,false);
+}
+
+async function listAvailablePublications(){
+    const found=new Map(),root=collection(db,PUBLICATION_COLLECTION),queries=[query(root,where("ownerId","==",currentUser.uid)),query(root,where("allowedUserIds","array-contains",currentUser.uid))];
+    if(currentUser.email)queries.push(query(root,where("allowedEmails","array-contains",currentUser.email.toLowerCase())));
+    for(const request of queries){const snapshot=await getDocs(request);snapshot.docs.forEach(item=>found.set(item.id,{id:item.id,...item.data()}));}
+    return[...found.values()].sort((a,b)=>String(a.ownerName||a.ownerEmail).localeCompare(String(b.ownerName||b.ownerEmail)));
+}
+
+async function loadSyncState(publicationId){
+    const snapshot=await getDoc(getSyncStateRef(currentUser.uid,publicationId));
+    return snapshot.exists()?snapshot.data():{lastSyncedVersion:0,resolvedChangeIds:[]};
+}
+
+function getTargetCollection(layout,targetType){
+    if(targetType==="device")return layout.nodes;
+    if(targetType==="connection")return layout.links;
+    if(targetType==="annotation")return layout.annotations;
+    return null;
+}
+
+function comparableEntity(value){
+    if(!value||typeof value!=="object")return value;
+    const {pictureData,...copy}=value;return copy;
+}
+
+function getCurrentChangeValue(layout,change){
+    const entry=change.changedFields?.[0];
+    if(change.targetType==="diagram")return layout[change.field];
+    const collectionValue=getTargetCollection(layout,change.targetType),target=collectionValue?.find(item=>String(item.id)===String(change.targetId));
+    if(change.field==="$entity")return comparableEntity(target||null);
+    if(change.field==="position")return{x:target?.x,y:target?.y};
+    if(change.field==="image"){
+        const parsed=parseImageDataUrl(target?.pictureData);
+        if(parsed){const pictureHash=hashString(parsed.base64);return{pictureId:`device-${hashString(String(target.id||"device"))}-${pictureHash}`,pictureHash};}
+        return{pictureId:target?.pictureId||null,pictureHash:target?.pictureHash||null};
+    }
+    return target?.[change.field];
+}
+
+function hasConnectionResourceConflict(layout,change,after){
+    if(change.targetType!=="connection"||change.operation==="delete")return false;
+    const current=layout.links.find(link=>String(link.id)===String(change.targetId));
+    let candidate=change.field==="$entity"?cloneValue(after):(current?{...current,[change.field]:cloneValue(after)}:null);
+    if(!candidate)return true;
+    return layout.links.some(link=>{
+        if(String(link.id)===String(change.targetId))return false;
+        const samePair=new Set([String(link.from),String(link.to)]).size===new Set([String(candidate.from),String(candidate.to)]).size&&[String(candidate.from),String(candidate.to)].every(id=>id===String(link.from)||id===String(link.to));
+        const sourceConflict=Number(candidate.sourcePort)>0&&((String(link.from)===String(candidate.from)&&Number(link.sourcePort)===Number(candidate.sourcePort))||(String(link.to)===String(candidate.from)&&Number(link.targetPort)===Number(candidate.sourcePort)));
+        const targetConflict=Number(candidate.targetPort)>0&&((String(link.from)===String(candidate.to)&&Number(link.sourcePort)===Number(candidate.targetPort))||(String(link.to)===String(candidate.to)&&Number(link.targetPort)===Number(candidate.targetPort)));
+        return samePair||sourceConflict||targetConflict;
+    });
+}
+
+function formatChangeValue(value){
+    if(value===null||value===undefined||value==="")return "—";
+    const text=typeof value==="object"?JSON.stringify(value):String(value);
+    return text.length>220?`${text.slice(0,217)}…`:text;
+}
+
+function createSyncChangeRow(item){
+    const row=document.createElement("article");row.className=`syncChange${item.conflict?" conflict":""}`;row.dataset.changeId=item.changeId;
+    const checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.className="syncApply";checkbox.checked=!item.conflict;checkbox.disabled=item.conflict;checkbox.setAttribute("aria-label",`Apply ${item.targetLabel} ${item.field}`);
+    const content=document.createElement("div"),title=document.createElement("strong");title.textContent=`${item.targetLabel} · ${item.field==="$entity"?item.operation:item.field}`;
+    const details=document.createElement("dl"),beforeTitle=document.createElement("dt"),beforeValue=document.createElement("dd"),afterTitle=document.createElement("dt"),afterValue=document.createElement("dd");
+    beforeTitle.textContent="Current";beforeValue.textContent=formatChangeValue(item.current);afterTitle.textContent="Shared";afterValue.textContent=formatChangeValue(item.after);details.append(beforeTitle,beforeValue,afterTitle,afterValue);content.append(title,details);row.append(checkbox,content);
+    if(item.conflict){
+        const choice=document.createElement("label");choice.className="syncConflictChoice";choice.textContent="Conflict: ";const select=document.createElement("select");select.className="syncResolution";[["shared","Use shared version"],["mine","Keep mine"],["defer","Review later"]].forEach(([value,label])=>{const option=document.createElement("option");option.value=value;option.textContent=label;select.appendChild(option);});select.value="defer";checkbox.checked=false;choice.appendChild(select);row.appendChild(choice);
+    }
+    return row;
+}
+
+async function reviewSelectedPublication(){
+    const publicationId=syncSourceSelect.value;if(!publicationId)return;
+    const publicationSnapshot=await getDoc(getPublicationRef(publicationId));if(!publicationSnapshot.exists())throw new Error("Published diagram tidak ditemukan.");
+    const publication={id:publicationId,...publicationSnapshot.data()},state=await loadSyncState(publicationId);let cursor=Math.max(0,Number(state.lastSyncedVersion)||0);const resolved=new Set(Array.isArray(state.resolvedChangeIds)?state.resolvedChangeIds:[]);
+    const latestVersion=Math.max(cursor,Number(publication.latestVersion)||0);
+    const snapshot=latestVersion>cursor?await getDocs(query(collection(db,PUBLICATION_COLLECTION,publicationId,"changes"),where("newVersion",">",cursor),where("newVersion","<=",latestVersion),orderBy("newVersion"))):{docs:[]};
+    const layout=bridge.getDiagramData(),allChanges=snapshot.docs.map(item=>({id:item.id,...item.data()})).sort((a,b)=>a.newVersion-b.newVersion||String(a.changeId).localeCompare(String(b.changeId))),reviewed=allChanges.filter(item=>!resolved.has(item.changeId)).map(change=>{
+        const entry=change.changedFields?.[0]||{},current=getCurrentChangeValue(layout,change),alreadyApplied=valuesEqual(current,entry.after),conflict=!alreadyApplied&&(!valuesEqual(current,entry.before)||hasConnectionResourceConflict(layout,change,entry.after));
+        return{...change,before:entry.before,after:entry.after,current,alreadyApplied,conflict};
+    });
+    reviewed.filter(item=>item.alreadyApplied).forEach(item=>resolved.add(item.changeId));
+    for(const version of [...new Set(allChanges.map(item=>item.newVersion))].sort((a,b)=>a-b)){if(allChanges.filter(item=>item.newVersion===version).every(item=>resolved.has(item.changeId)))cursor=version;else break;}
+    const remainingResolved=[...resolved].filter(id=>{const item=allChanges.find(change=>change.changeId===id);return !item||item.newVersion>cursor;}).slice(-500);
+    if(cursor!==Math.max(0,Number(state.lastSyncedVersion)||0))await setDoc(getSyncStateRef(currentUser.uid,publicationId),{lastSyncedVersion:cursor,resolvedChangeIds:remainingResolved,lastSourceVersion:publication.latestVersion||cursor,lastSyncTime:serverTimestamp()},{merge:true});
+    loadedSyncChanges=reviewed.filter(item=>!item.alreadyApplied);loadedSyncState={...state,lastSyncedVersion:cursor,resolvedChangeIds:remainingResolved,publication};syncChangesList.innerHTML="";
+    if(!loadedSyncChanges.length){const empty=document.createElement("p");empty.className="syncEmpty";empty.textContent="✓ Up to date";syncChangesList.appendChild(empty);}
+    else loadedSyncChanges.forEach(item=>syncChangesList.appendChild(createSyncChangeRow(item)));
+    syncVersionStatus.textContent=`Your cursor: v${cursor} · ${publication.ownerName||publication.ownerEmail||"Shared user"}: v${publication.latestVersion||0} · ${loadedSyncChanges.length} change(s) available`;
+}
+
+async function hydrateMergedPhotos(layout,publicationId,photoIds){
+    for(const photoId of photoIds){
+        const node=layout.nodes.find(item=>item.pictureId===photoId);if(!node)continue;
+        const snapshot=await getDoc(getPublishedPhotoRef(publicationId,photoId));if(!snapshot.exists())throw new Error(`Published photo ${photoId} tidak ditemukan.`);
+        const photo=snapshot.data()||{},verified=readVerifiedPhotoSnapshot(snapshot,node.pictureHash);
+        if(!verified)throw new Error(`Published photo ${photoId} tidak valid.`);
+        node.pictureData=`data:${verified.mimeType};base64,${verified.base64}`;
+    }
+}
+
+function applySharedChange(layout,change,photoIds){
+    const after=cloneValue(change.after);
+    if(change.targetType==="diagram"){layout[change.field]=after;return true;}
+    const values=getTargetCollection(layout,change.targetType);if(!values)return false;
+    const index=values.findIndex(item=>String(item.id)===String(change.targetId));
+    if(change.field==="$entity"){
+        if(change.operation==="delete"){if(index>=0)values.splice(index,1);return true;}
+        if(index>=0)values[index]=after;else values.push(after);
+        if(after?.pictureId)photoIds.add(after.pictureId);return true;
+    }
+    if(index<0)return false;
+    if(change.field==="position"){values[index].x=after?.x;values[index].y=after?.y;return true;}
+    if(change.field==="image"){
+        values[index].pictureId=after?.pictureId||null;values[index].pictureHash=after?.pictureHash||null;
+        if(after?.pictureId)photoIds.add(after.pictureId);else values[index].pictureData="";
+        return true;
+    }
+    values[index][change.field]=after;
+    return true;
+}
+
+function validateMergedLayout(layout){
+    const nodesById=new Map(layout.nodes.map(node=>[String(node.id),node])),pairs=new Set(),ports=new Set();
+    for(const link of layout.links){
+        const from=String(link.from),to=String(link.to);if(!nodesById.has(from)||!nodesById.has(to))throw new Error(`Connection ${link.label||link.id} membutuhkan device yang belum dipilih.`);
+        const pair=[from,to].sort().join("::");if(pairs.has(pair))throw new Error(`Conflict: terdapat dua connection antara ${from} dan ${to}.`);pairs.add(pair);
+        for(const [nodeId,port] of [[from,Number(link.sourcePort)],[to,Number(link.targetPort)]])if(Number.isInteger(port)&&port>0){const key=`${nodeId}:${port}`;if(ports.has(key))throw new Error(`Conflict port: ${nodeId} port/channel ${port} digunakan lebih dari sekali.`);ports.add(key);const count=Number(nodesById.get(nodeId)?.portCount)||0;if(count&&port>count)throw new Error(`Port/channel ${port} melebihi kapasitas ${nodeId}.`);}
+    }
+}
+
+async function syncReviewedChanges({all=false}={}){
+    if(!loadedSyncState?.publication)throw new Error("Pilih dan review published diagram terlebih dahulu.");
+    const layout=cloneValue(bridge.getDiagramData()),resolved=new Set(Array.isArray(loadedSyncState.resolvedChangeIds)?loadedSyncState.resolvedChangeIds:[]),photoIds=new Set();
+    let selectedCount=0;
+    for(const change of loadedSyncChanges){
+        const row=syncChangesList.querySelector(`[data-change-id="${CSS.escape(change.changeId)}"]`),checkbox=row?.querySelector(".syncApply"),resolution=row?.querySelector(".syncResolution")?.value;
+        let action=all?"shared":change.conflict?resolution:(checkbox?.checked?"shared":"defer");
+        if(action==="defer"||!action)continue;
+        selectedCount++;
+        if(action==="shared"&&!applySharedChange(layout,change,photoIds))throw new Error(`Target ${change.targetLabel} belum ada. Pilih juga perubahan create yang terkait.`);
+        resolved.add(change.changeId);
+    }
+    if(!selectedCount)throw new Error("Tidak ada perubahan yang dipilih.");
+    validateMergedLayout(layout);
+    await hydrateMergedPhotos(layout,loadedSyncState.publication.id,photoIds);
+    bridge.loadDiagramData(layout);await saveNow({manual:true});await waitForSaveIdle();if(lastSaveError)throw lastSaveError;
+    let cursor=Math.max(0,Number(loadedSyncState.lastSyncedVersion)||0);
+    const versions=[...new Set(loadedSyncChanges.map(item=>item.newVersion))].sort((a,b)=>a-b);
+    for(const version of versions){const atVersion=loadedSyncChanges.filter(item=>item.newVersion===version);if(atVersion.every(item=>resolved.has(item.changeId)))cursor=version;else break;}
+    const remaining=[...resolved].filter(id=>{const item=loadedSyncChanges.find(change=>change.changeId===id);return !item||item.newVersion>cursor;}).slice(-500);
+    await setDoc(getSyncStateRef(currentUser.uid,loadedSyncState.publication.id),{sourceOwnerId:loadedSyncState.publication.ownerId,sourceName:loadedSyncState.publication.ownerName||loadedSyncState.publication.ownerEmail||"Shared user",lastSyncedFromUser:loadedSyncState.publication.ownerId,lastSyncedDiagram:loadedSyncState.publication.diagramId||DIAGRAM_ID,lastSyncedVersion:cursor,lastSourceVersion:loadedSyncState.publication.latestVersion||cursor,resolvedChangeIds:remaining,lastSyncTime:serverTimestamp()},{merge:true});
+    bridge.showFeedback(`Sync selesai. Cursor sekarang v${cursor}.`,false);await reviewSelectedPublication();
+}
+
+async function openShareModal(){
+    if(!currentUser){bridge.showFeedback("Login Google diperlukan untuk Share / Publish.",true);return;}
+    const snapshot=await getDoc(getPublicationRef(getPublicationId(currentUser.uid)));
+    if(snapshot.exists()){const data=snapshot.data();shareRecipients.value=[...(data.allowedEmails||[]),...(data.allowedUserIds||[])].join("\n");shareStatus.textContent=`Published version: v${data.latestVersion||0}`;}
+    else shareStatus.textContent="Belum dipublish.";
+    shareModal.style.display="flex";shareRecipients.focus();
+}
+
+async function openSyncModal(){
+    if(!currentUser){bridge.showFeedback("Login Google diperlukan untuk Sync / Merge.",true);return;}
+    syncModal.style.display="flex";syncSourceSelect.innerHTML="";syncVersionStatus.textContent="Loading shared diagrams…";syncChangesList.innerHTML='<p class="syncEmpty">Loading…</p>';
+    const publications=(await listAvailablePublications()).filter(item=>item.ownerId!==currentUser.uid);
+    if(!publications.length){const option=document.createElement("option");option.value="";option.textContent="No shared diagrams available";syncSourceSelect.appendChild(option);syncVersionStatus.textContent="Belum ada diagram yang dibagikan kepada akun ini.";syncChangesList.innerHTML='<p class="syncEmpty">No changes available.</p>';return;}
+    publications.forEach(item=>{const option=document.createElement("option");option.value=item.id;option.textContent=`${item.ownerName||item.ownerEmail||item.ownerId} · ${item.name||"Diagram"} · v${item.latestVersion||0}`;syncSourceSelect.appendChild(option);});
+    await reviewSelectedPublication();
+}
+
 async function handleAuthenticatedUser(user,generation){
-    currentUser=user;diagramReady=false;diagramExists=false;knownRevision=null;knownChunkCount=0;knownPhotoIds=new Set();verifiedPhotoIds=new Set();photoLoadFailures=0;
+    currentUser=user;diagramReady=false;diagramExists=false;knownRevision=null;knownChunkCount=0;knownVersion=0;knownPhotoIds=new Set();verifiedPhotoIds=new Set();photoLoadFailures=0;lastSavedCloudData=null;
     bridge.setStorageUser(user.uid);setUserDisplay(user);authMessage.textContent="Memuat diagram Anda...";signInButton.disabled=true;
     let cloudLoaded=false;
     let cloudError=null;
@@ -387,7 +687,7 @@ async function handleAuthenticatedUser(user,generation){
 async function handleAuthState(user){
     const generation=++authGeneration;
     clearTimeout(saveTimer);saveTimer=null;saveQueued=false;diagramReady=false;
-    if(!user){currentUser=null;knownPhotoIds=new Set();verifiedPhotoIds=new Set();photoLoadFailures=0;bridge.setStorageUser(null);showLogin();return;}
+    if(!user){currentUser=null;knownVersion=0;knownPhotoIds=new Set();verifiedPhotoIds=new Set();photoLoadFailures=0;lastSavedCloudData=null;bridge.setStorageUser(null);showLogin();return;}
     await handleAuthenticatedUser(user,generation);
 }
 
@@ -395,6 +695,17 @@ window.addEventListener(CHANGE_EVENT,scheduleCloudSave);
 window.addEventListener("offline",()=>{if(currentUser&&diagramReady)setSaveStatus("⚠ Save failed","error");});
 window.addEventListener("online",()=>{if(currentUser&&diagramReady)scheduleCloudSave();});
 saveCloudButton.addEventListener("click",()=>{void saveNow({manual:true});});
+shareButton.addEventListener("click",()=>{void openShareModal().catch(error=>bridge.showFeedback(getCloudErrorMessage(error),true));});
+syncButton.addEventListener("click",()=>{void openSyncModal().catch(error=>bridge.showFeedback(getCloudErrorMessage(error),true));});
+document.getElementById("btnCloseSharePublish").addEventListener("click",()=>{shareModal.style.display="none";shareButton.focus();});
+document.getElementById("btnCloseSyncMerge").addEventListener("click",()=>{syncModal.style.display="none";syncButton.focus();});
+document.getElementById("btnConfirmSharePublish").addEventListener("click",async event=>{const button=event.currentTarget;button.disabled=true;shareStatus.textContent="Publishing changes…";try{await publishDiagram();}catch(error){shareStatus.textContent=`⚠ ${getCloudErrorMessage(error)}`;bridge.showFeedback(getCloudErrorMessage(error),true);}finally{button.disabled=false;}});
+syncSourceSelect.addEventListener("change",()=>{void reviewSelectedPublication().catch(error=>bridge.showFeedback(getCloudErrorMessage(error),true));});
+document.getElementById("btnRefreshSync").addEventListener("click",()=>{void reviewSelectedPublication().catch(error=>bridge.showFeedback(getCloudErrorMessage(error),true));});
+document.getElementById("syncSelectAll").addEventListener("change",event=>{syncChangesList.querySelectorAll(".syncApply").forEach(input=>{if(!input.closest(".conflict"))input.checked=event.currentTarget.checked;});});
+document.getElementById("btnSyncSelected").addEventListener("click",async event=>{const button=event.currentTarget;button.disabled=true;try{await syncReviewedChanges();}catch(error){bridge.showFeedback(getCloudErrorMessage(error),true);}finally{button.disabled=false;}});
+document.getElementById("btnSyncAll").addEventListener("click",async event=>{if(!confirm("Sync all shared changes? Conflict fields will use the shared version."))return;const button=event.currentTarget;button.disabled=true;try{await syncReviewedChanges({all:true});}catch(error){bridge.showFeedback(getCloudErrorMessage(error),true);}finally{button.disabled=false;}});
+document.addEventListener("keydown",event=>{if(event.key!=="Escape")return;if(shareModal.style.display==="flex"){shareModal.style.display="none";shareButton.focus();}if(syncModal.style.display==="flex"){syncModal.style.display="none";syncButton.focus();}});
 
 async function initializeFirebase(){
     if(!bridge)throw new Error("Diagram cloud bridge tidak tersedia.");
