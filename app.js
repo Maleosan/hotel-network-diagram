@@ -2542,10 +2542,11 @@ async function populateSharedDiagramFiles(){
         const files=await fetchSharedDiagramFiles();select.innerHTML="";
         files.forEach(file=>{const option=document.createElement("option");option.value=file.path;option.textContent=file.name;select.appendChild(option);});
         const preferred=files.some(file=>file.path===sharedDiagramPath)?sharedDiagramPath:(files.some(file=>file.path===DEFAULT_SHARED_DIAGRAM_PATH)?DEFAULT_SHARED_DIAGRAM_PATH:files[0].path);
-        sharedDiagramPath=preferred;select.value=preferred;pathOutput.textContent=`${SHARED_DIAGRAM_BRANCH}/${preferred}`;status.textContent=`${files.length} JSON file${files.length===1?"":"s"} available.`;select.disabled=false;confirm.disabled=false;
+        sharedDiagramPath=preferred;sharedDiagramUpdatedAt=null;select.value=preferred;pathOutput.textContent=`${SHARED_DIAGRAM_BRANCH}/${preferred}`;status.textContent=`${files.length} JSON file${files.length===1?"":"s"} available.`;select.disabled=false;select.focus();
         await refreshGitHubLastUpdated(preferred);
+        confirm.disabled=false;
     }catch(error){
-        console.warn(error);sharedDiagramPath=DEFAULT_SHARED_DIAGRAM_PATH;select.innerHTML="";const option=document.createElement("option");option.value=sharedDiagramPath;option.textContent=sharedDiagramPath.split("/").pop();select.appendChild(option);pathOutput.textContent=`${SHARED_DIAGRAM_BRANCH}/${sharedDiagramPath}`;status.textContent="File list unavailable; using the default JSON.";select.disabled=false;confirm.disabled=false;await refreshGitHubLastUpdated(sharedDiagramPath);
+        console.warn(error);sharedDiagramPath=DEFAULT_SHARED_DIAGRAM_PATH;sharedDiagramUpdatedAt=null;select.innerHTML="";const option=document.createElement("option");option.value=sharedDiagramPath;option.textContent=sharedDiagramPath.split("/").pop();select.appendChild(option);pathOutput.textContent=`${SHARED_DIAGRAM_BRANCH}/${sharedDiagramPath}`;status.textContent="File list unavailable; using the default JSON.";select.disabled=false;select.focus();await refreshGitHubLastUpdated(sharedDiagramPath);confirm.disabled=false;
     }
 }
 
@@ -3246,7 +3247,6 @@ btnCheckStatus.onclick=function(){
 btnOpenMain.onclick=function(){
     githubUpdateModal.style.display="flex";
     void populateSharedDiagramFiles();
-    document.getElementById("githubDiagramFile").focus();
 };
 document.getElementById("githubDiagramFile").addEventListener("change",function(){
     sharedDiagramPath=normalizeSharedDiagramPath(this.value);sharedDiagramUpdatedAt=null;document.getElementById("githubDiagramPath").textContent=`${SHARED_DIAGRAM_BRANCH}/${sharedDiagramPath}`;void refreshGitHubLastUpdated(sharedDiagramPath);
