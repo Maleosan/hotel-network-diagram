@@ -8,18 +8,38 @@
 
 <title>Hotel Network Diagram</title>
 
-<link rel="stylesheet" href="style.css?v=20260904-1">
+<link rel="stylesheet" href="style.css?v=20260904-2">
 
 </head>
 <body>
 
 <input type="file" id="fileOpen" accept=".json,application/json" hidden>
 
+<div id="authGate" class="authGate" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+    <div class="authCard">
+        <div class="authLogo" aria-hidden="true">HND</div>
+        <h1 id="authTitle">HOTEL NETWORK DIAGRAM</h1>
+        <p>Sign in untuk mengakses dan menyimpan diagram Anda dengan aman.</p>
+        <button id="btnGoogleSignIn" class="googleSignIn" type="button" disabled><span aria-hidden="true">G</span> Sign in with Google</button>
+        <button id="btnContinueLocal" class="localModeButton" type="button" hidden>Continue in Local Mode</button>
+        <p id="authMessage" class="authMessage" role="status" aria-live="polite">Menghubungkan ke Firebase...</p>
+    </div>
+</div>
+
 <div id="toolbar">
 
     <div class="logo">
         <label for="diagramName" class="srOnly">Diagram name</label>
         <input id="diagramName" value="HOTEL NETWORK DIAGRAM" maxlength="80" aria-label="Diagram name">
+    </div>
+
+    <div id="cloudAccount" class="cloudAccount" hidden>
+        <span id="cloudSaveStatus" class="cloudSaveStatus" role="status" aria-live="polite">Cloud ready</span>
+        <button id="btnSaveCloud" class="saveCloudButton" type="button">☁ Save to Cloud</button>
+        <img id="cloudUserPhoto" class="cloudUserPhoto" alt="" referrerpolicy="no-referrer" hidden>
+        <span id="cloudUserInitial" class="cloudUserInitial" aria-hidden="true">U</span>
+        <span class="cloudUserText"><strong id="cloudUserName">User</strong><small id="cloudUserEmail"></small></span>
+        <button id="btnLogout" class="logoutButton" type="button">Logout</button>
     </div>
 
     <div class="tools">
@@ -534,7 +554,8 @@
 
 </div>
 
-<script src="app.js?v=20260904-1"></script>
+<script src="app.js?v=20260904-2"></script>
+<script type="module" src="firebase.js?v=20260904-2"></script>
 </body>
 
 </html>
