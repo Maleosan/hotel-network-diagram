@@ -44,6 +44,7 @@ let panPointerId=null;
 let spacePressed=false;
 const touchPoints=new Map();
 let pinchState=null;
+let readOnlyMode=false;
 
 let panStartX=0;
 
@@ -997,11 +998,12 @@ function drawAnnotation(annotation){
     }
     group.addEventListener("pointerdown",startAnnotationDrag);
     group.addEventListener("click",event=>{event.stopPropagation();selectedNode=null;selectedLink=null;selectedAnnotation=annotation;drawLinksOnly();showAnnotationProperties(annotation);group.classList.add("selectedAnnotation");});
-    group.addEventListener("dblclick",event=>{event.stopPropagation();if(annotation.type!=="text")return;const value=prompt("Edit text",annotation.text);if(value===null||!value.trim())return;recordHistory();annotation.text=value.trim().slice(0,500);render();showAnnotationProperties(annotation);saveToLocalStorage();});
+    group.addEventListener("dblclick",event=>{event.stopPropagation();if(readOnlyMode||annotation.type!=="text")return;const value=prompt("Edit text",annotation.text);if(value===null||!value.trim())return;recordHistory();annotation.text=value.trim().slice(0,500);render();showAnnotationProperties(annotation);saveToLocalStorage();});
     annotationsLayer.appendChild(group);
 }
 
 function startAnnotationDrag(event){
+    if(readOnlyMode)return;
     if(event.pointerType==="mouse"&&event.button!==0)return;
     event.preventDefault();event.stopPropagation();
     const annotation=annotations.find(item=>item.id===event.currentTarget.dataset.annotationId);if(!annotation)return;
@@ -1372,6 +1374,8 @@ g.addEventListener("contextmenu",function(e){
     e.preventDefault();
     e.stopPropagation();
 
+    if(readOnlyMode)return;
+
     contextTarget=node;
 
     contextMenu.style.display="block";
@@ -1705,7 +1709,7 @@ function drawLinks(){
             selectLinkById(this.dataset.linkId);
 
         });
-        hit.addEventListener("dblclick",function(e){e.stopPropagation();selectLinkById(link.id);addWaypointAt(getViewportPoint(e));});
+        hit.addEventListener("dblclick",function(e){e.stopPropagation();selectLinkById(link.id);if(!readOnlyMode)addWaypointAt(getViewportPoint(e));});
 
         // garis yang terlihat
         const line=document.createElementNS(SVGNS,"path");
@@ -1762,6 +1766,7 @@ function drawWaypointHandles(link){
 }
 
 function startWaypointDrag(e){
+    if(readOnlyMode)return;
     e.preventDefault();e.stopPropagation();
     const link=links.find(item=>item.id===e.currentTarget.dataset.linkId);
     if(!link) return;
@@ -1791,7 +1796,7 @@ function stopWaypointDrag(e){
 }
 
 function addWaypointAt(point){
-    if(!selectedLink) return;
+    if(readOnlyMode||!selectedLink) return;
     recordHistory();
     selectedLink.routing="custom";
     const snapped=getSnappedPosition(point.x,point.y);
@@ -1821,13 +1826,13 @@ function addDefaultWaypoint(){
 }
 
 function deleteSelectedWaypoint(){
-    if(!selectedLink || selectedWaypointIndex===null || !selectedLink.route[selectedWaypointIndex]) return false;
+    if(readOnlyMode||!selectedLink || selectedWaypointIndex===null || !selectedLink.route[selectedWaypointIndex]) return false;
     recordHistory();selectedLink.route.splice(selectedWaypointIndex,1);selectedWaypointIndex=null;
     render();saveToLocalStorage();return true;
 }
 
 function resetSelectedRoute(){
-    if(!selectedLink) return;
+    if(readOnlyMode||!selectedLink) return;
     recordHistory();selectedLink.route=[];selectedLink.routing="straight";selectedWaypointIndex=null;
     syncRoutingControls();render();saveToLocalStorage();
 }
@@ -2195,6 +2200,8 @@ function startDrag(e){
 
     if(e.pointerType==="mouse" && e.button!==0) return;
 
+    if(readOnlyMode)return;
+
     e.preventDefault();
 
     dragging=e.currentTarget;
@@ -2341,7 +2348,7 @@ function drawLinksOnly(){
             selectLinkById(this.dataset.linkId);
 
         });
-        hit.addEventListener("dblclick",function(e){e.stopPropagation();selectLinkById(link.id);addWaypointAt(getViewportPoint(e));});
+        hit.addEventListener("dblclick",function(e){e.stopPropagation();selectLinkById(link.id);if(!readOnlyMode)addWaypointAt(getViewportPoint(e));});
 
         const line=document.createElementNS(SVGNS,"path");
 
@@ -2576,7 +2583,7 @@ function saveToLocalStorage(options={}){
 
     }
 
-    if(options.notifyCloud!==false&&typeof window!=="undefined"&&typeof window.dispatchEvent==="function"){
+    if(options.notifyCloud!==false&&!readOnlyMode&&typeof window!=="undefined"&&typeof window.dispatchEvent==="function"){
         window.dispatchEvent(new Event("hotel-network-diagram-change"));
     }
 
@@ -3068,6 +3075,7 @@ function clearPaletteDropFeedback(){
     document.querySelectorAll(".paletteDevice.dragging").forEach(item=>item.classList.remove("dragging"));
 }
 function addPaletteDeviceAt(type,clientX,clientY){
+    if(readOnlyMode)return;
     const point=getViewportPoint({clientX,clientY});
     const defaultSize=getNodeDisplaySize({width:NODE_WIDTH,height:NODE_HEIGHT});
     const position=getSnappedPosition(point.x-defaultSize.width/2,point.y-defaultSize.height/2);
@@ -3076,10 +3084,12 @@ function addPaletteDeviceAt(type,clientX,clientY){
 }
 function bindPaletteDevice(item){
     item.addEventListener("dragstart",event=>{
+        if(readOnlyMode){event.preventDefault();return;}
         draggedPaletteType=item.dataset.deviceType;item.classList.add("dragging");event.dataTransfer.effectAllowed="copy";event.dataTransfer.setData("text/x-device-type",draggedPaletteType);
     });
     item.addEventListener("dragend",()=>{draggedPaletteType=null;clearPaletteDropFeedback();});
     item.addEventListener("pointerdown",event=>{
+        if(readOnlyMode)return;
         if(event.pointerType!=="touch") return;
         touchPaletteDrag={pointerId:event.pointerId,type:item.dataset.deviceType,startX:event.clientX,startY:event.clientY,active:false,item};item.setPointerCapture?.(event.pointerId);
     });
@@ -3102,9 +3112,9 @@ function initializeDevicePalette(){
     renderDevicePalette();
     toggle.addEventListener("click",()=>{const collapsed=palette.classList.toggle("collapsed");toggle.setAttribute("aria-expanded",String(!collapsed));toggle.setAttribute("aria-label",collapsed?"Expand device palette":"Collapse device palette");});
     search.addEventListener("input",()=>renderDevicePalette(search.value));
-    canvas.addEventListener("dragover",event=>{const type=event.dataTransfer.getData("text/x-device-type")||draggedPaletteType;if(!DEVICE_TYPES.has(type))return;event.preventDefault();event.dataTransfer.dropEffect="copy";showPaletteDropFeedback(type,event.clientX,event.clientY);});
+    canvas.addEventListener("dragover",event=>{if(readOnlyMode)return;const type=event.dataTransfer.getData("text/x-device-type")||draggedPaletteType;if(!DEVICE_TYPES.has(type))return;event.preventDefault();event.dataTransfer.dropEffect="copy";showPaletteDropFeedback(type,event.clientX,event.clientY);});
     canvas.addEventListener("dragleave",event=>{if(!canvas.contains(event.relatedTarget))clearPaletteDropFeedback();});
-    canvas.addEventListener("drop",event=>{const type=event.dataTransfer.getData("text/x-device-type")||draggedPaletteType;if(!DEVICE_TYPES.has(type))return;event.preventDefault();addPaletteDeviceAt(type,event.clientX,event.clientY);draggedPaletteType=null;clearPaletteDropFeedback();});
+    canvas.addEventListener("drop",event=>{if(readOnlyMode)return;const type=event.dataTransfer.getData("text/x-device-type")||draggedPaletteType;if(!DEVICE_TYPES.has(type))return;event.preventDefault();addPaletteDeviceAt(type,event.clientX,event.clientY);draggedPaletteType=null;clearPaletteDropFeedback();});
 }
 
 function renderStatusDeviceOptions(search=""){
@@ -3116,7 +3126,7 @@ function renderStatusDeviceOptions(search=""){
 }
 document.getElementById("canvasContainer").addEventListener("click",event=>{
     if(event.target.closest?.(".node,.waypointHandle,.annotation")||event.target.dataset?.linkId) return;
-    if(pendingAnnotation){
+    if(pendingAnnotation&&!readOnlyMode){
         const point=getViewportPoint(event),position=getSnappedPosition(point.x,point.y);
         recordHistory();annotations.push({...pendingAnnotation,id:uniqueId("annotation"),x:position.x,y:position.y});pendingAnnotation=null;render();saveToLocalStorage();showFeedback("Annotation added",false);return;
     }
@@ -3197,7 +3207,47 @@ const btnExportSVG=document.getElementById("btnExportSVG");
 const btnBackground=document.getElementById("btnBackground");
 const btnDiagramSettings=document.getElementById("btnDiagramSettings");
 const btnMenuToggle=document.getElementById("btnMenuToggle");
+const btnModeToggle=document.getElementById("btnModeToggle");
 const toolbarMenu=document.getElementById("toolbarMenu");
+
+const READ_ONLY_MODE_KEY="hotelNetworkDiagram.readOnlyMode";
+const READ_ONLY_MUTATION_IDS=new Set([
+    "btnOpen","btnOpenMain","btnUndo","btnRedo","btnAddDevice","btnAddText","btnAddImage","btnAddLink","btnCancelLink",
+    "btnCheckStatus","btnResetDefault","btnGrid","btnSnap","btnTheme","btnBackground","btnDiagramSettings"
+]);
+
+function showReadOnlyNotice(){showFeedback("Read Mode aktif. Pilih Edit Mode untuk mengubah diagram.",false);}
+
+function isReadOnlyMutationTarget(target){
+    const element=target instanceof Element?target.closest("button,input,select,textarea,[role='menuitem']"):null;
+    if(!element||element.id==="btnModeToggle"||element.id==="btnCloseProperties")return false;
+    return READ_ONLY_MUTATION_IDS.has(element.id)||Boolean(element.closest("#propertyPanel,#deviceModal,#statusCheckModal,#githubUpdateModal,#cameraModal,#backgroundModal,#diagramSettingsModal,#contextMenu"));
+}
+
+function setReadOnlyMode(enabled,{announce=true}={}){
+    readOnlyMode=Boolean(enabled);
+    document.body.classList.toggle("readMode",readOnlyMode);
+    btnModeToggle.textContent=readOnlyMode?"✏ Edit Mode":"🔒 Read Mode";
+    btnModeToggle.setAttribute("aria-pressed",String(readOnlyMode));
+    btnModeToggle.classList.toggle("active",readOnlyMode);
+    document.getElementById("diagramName").readOnly=readOnlyMode;
+    ["nodeProperties","linkProperties","annotationProperties"].forEach(id=>{document.getElementById(id).inert=readOnlyMode;});
+    if(readOnlyMode){
+        pendingAnnotation=null;cancelLinkMode();contextMenu.style.display="none";dragging=null;annotationDrag=null;waypointDrag=null;touchPaletteDrag=null;clearPaletteDropFeedback();
+        ["deviceModal","statusCheckModal","githubUpdateModal","backgroundModal","diagramSettingsModal"].forEach(id=>{document.getElementById(id).style.display="none";});
+        if(cameraModal.style.display==="flex")closeDeviceCamera();
+    }
+    try{localStorage.setItem(READ_ONLY_MODE_KEY,readOnlyMode?"1":"0");}catch(error){console.warn("Unable to save diagram mode",error);}
+    document.getElementById("statusBar").textContent=readOnlyMode?"Read Mode · pan, zoom, inspect, and export only":"Edit Mode · diagram changes enabled";
+    if(announce)showFeedback(readOnlyMode?"Read Mode aktif. Perubahan diagram dikunci.":"Edit Mode aktif. Diagram dapat diubah.",false);
+}
+
+document.addEventListener("click",event=>{
+    if(!readOnlyMode||!isReadOnlyMutationTarget(event.target))return;
+    event.preventDefault();event.stopImmediatePropagation();showReadOnlyNotice();
+},true);
+
+btnModeToggle.addEventListener("click",()=>setReadOnlyMode(!readOnlyMode));
 
 function setToolbarMenuOpen(open){
     if(!toolbarMenu||!btnMenuToggle)return;
@@ -3700,6 +3750,8 @@ document.addEventListener("keydown",function(e){
 
     if(e.code==="Space"){spacePressed=true;e.preventDefault();svg.style.cursor="grab";return;}
 
+    if(readOnlyMode&&(((e.ctrlKey||e.metaKey)&&["y","z"].includes(e.key.toLowerCase()))||e.key==="Delete")){e.preventDefault();showReadOnlyNotice();return;}
+
     if((e.ctrlKey || e.metaKey) && e.key.toLowerCase()==="z" && !e.shiftKey){
 
         e.preventDefault();
@@ -3823,3 +3875,6 @@ cmDuplicate.onclick=function(){
     saveToLocalStorage();
 
 };
+
+try{setReadOnlyMode(localStorage.getItem(READ_ONLY_MODE_KEY)==="1",{announce:false});}
+catch(error){setReadOnlyMode(false,{announce:false});}
