@@ -10,7 +10,7 @@ service cloud.firestore {
       return request.auth != null && (
         data.ownerId == request.auth.uid ||
         (data.allowedUserIds is list && request.auth.uid in data.allowedUserIds) ||
-        (request.auth.token.email is string && data.allowedEmails is list && request.auth.token.email in data.allowedEmails)
+        (request.auth.token.email is string && request.auth.token.email_verified == true && data.allowedEmails is list && request.auth.token.email in data.allowedEmails)
       );
     }
 
