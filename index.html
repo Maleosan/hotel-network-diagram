@@ -8,7 +8,7 @@
 
 <title>Hotel Network Diagram</title>
 
-<link rel="stylesheet" href="style.css?v=20260903-6">
+<link rel="stylesheet" href="style.css?v=20260904-1">
 
 </head>
 <body>
@@ -264,7 +264,8 @@
             <section class="mediaSection" aria-labelledby="devicePictureHeading">
                 <h3 id="devicePictureHeading">Device Picture</h3>
                 <div id="propPicturePreview" class="mediaPreview picturePreview">No picture</div>
-                <button id="btnChangePicture" type="button">Add Picture</button>
+                <button id="btnChangePicture" type="button">📁 From Computer</button>
+                <button id="btnTakePicture" type="button">📷 Camera</button>
                 <button id="btnRemovePicture" type="button">Remove Picture</button>
                 <input id="propPictureFile" type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp" hidden>
             </section>
@@ -475,6 +476,24 @@
     </div>
 </div>
 
+<div id="cameraModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="cameraModalTitle">
+    <div class="modalContent cameraContent">
+        <h2 id="cameraModalTitle">Take Device Photo</h2>
+        <div class="cameraStage">
+            <video id="cameraPreview" autoplay playsinline muted aria-label="Live camera preview"></video>
+            <img id="cameraPhotoPreview" alt="Captured device photo preview" hidden>
+        </div>
+        <canvas id="cameraCaptureCanvas" hidden></canvas>
+        <p id="cameraStatus" class="cameraStatus" role="status" aria-live="polite">Preparing camera...</p>
+        <div class="modalActions cameraActions">
+            <button id="btnCapturePhoto" type="button" disabled>📷 Capture Photo</button>
+            <button id="btnUsePhoto" type="button" hidden>Use Photo</button>
+            <button id="btnRetakePhoto" type="button" hidden>Retake</button>
+            <button id="btnCancelCamera" type="button">Cancel</button>
+        </div>
+    </div>
+</div>
+
 <div id="statusCheckModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="statusCheckModalTitle">
     <div class="modalContent statusCheckContent">
         <h2 id="statusCheckModalTitle">Check Device Status</h2>
@@ -515,7 +534,7 @@
 
 </div>
 
-<script src="app.js?v=20260903-6"></script>
+<script src="app.js?v=20260904-1"></script>
 </body>
 
 </html>
