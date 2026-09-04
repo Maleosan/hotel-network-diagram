@@ -537,9 +537,14 @@
         <h2 id="githubUpdateModalTitle">Update from GitHub</h2>
         <p><strong>Update diagram dari GitHub?</strong></p>
         <p>Data diagram saat ini akan <strong>DIGANTIKAN</strong> dengan versi terbaru dari GitHub.<br>Perubahan lokal yang belum disimpan dapat hilang.</p>
+        <label for="githubDiagramFile">Choose JSON diagram</label>
+        <select id="githubDiagramFile" disabled>
+            <option>Retrieving JSON files…</option>
+        </select>
+        <small id="githubDiagramFileStatus" role="status" aria-live="polite">Reading the data folder from GitHub…</small>
         <dl class="githubUpdateInfo">
-            <dt>Master JSON:</dt>
-            <dd>main/data/HOTEL-NETWORK-DIAGRAM (10).json</dd>
+            <dt>Selected JSON:</dt>
+            <dd id="githubDiagramPath">main/data/HOTEL-NETWORK-DIAGRAM (10).json</dd>
             <dt>Last uploaded/updated:</dt>
             <dd id="githubLastUpdated">Retrieving from GitHub...</dd>
         </dl>
