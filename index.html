@@ -8,7 +8,7 @@
 
 <title>Hotel Network Diagram</title>
 
-<link rel="stylesheet" href="style.css?v=20260904-2">
+<link rel="stylesheet" href="style.css?v=20260904-3">
 
 </head>
 <body>
@@ -33,16 +33,18 @@
         <input id="diagramName" value="HOTEL NETWORK DIAGRAM" maxlength="80" aria-label="Diagram name">
     </div>
 
-    <div id="cloudAccount" class="cloudAccount" hidden>
-        <span id="cloudSaveStatus" class="cloudSaveStatus" role="status" aria-live="polite">Cloud ready</span>
-        <button id="btnSaveCloud" class="saveCloudButton" type="button">☁ Save to Cloud</button>
-        <img id="cloudUserPhoto" class="cloudUserPhoto" alt="" referrerpolicy="no-referrer" hidden>
-        <span id="cloudUserInitial" class="cloudUserInitial" aria-hidden="true">U</span>
-        <span class="cloudUserText"><strong id="cloudUserName">User</strong><small id="cloudUserEmail"></small></span>
-        <button id="btnLogout" class="logoutButton" type="button">Logout</button>
-    </div>
+    <button id="btnMenuToggle" class="menuToggle" type="button" aria-expanded="false" aria-controls="toolbarMenu" aria-label="Open tools menu" hidden>☰</button>
 
-    <div class="tools">
+    <div id="toolbarMenu" class="tools">
+
+        <div id="cloudAccount" class="cloudAccount" hidden>
+            <img id="cloudUserPhoto" class="cloudUserPhoto" alt="" referrerpolicy="no-referrer" hidden>
+            <span id="cloudUserInitial" class="cloudUserInitial" aria-hidden="true">U</span>
+            <span class="cloudUserText"><strong id="cloudUserName">User</strong><small id="cloudUserEmail"></small></span>
+            <span id="cloudSaveStatus" class="cloudSaveStatus" role="status" aria-live="polite">Cloud ready</span>
+            <button id="btnSaveCloud" class="saveCloudButton" type="button">☁ Save to Cloud</button>
+            <button id="btnLogout" class="logoutButton" type="button">Logout</button>
+        </div>
 
         <button id="btnOpen">📂 Load JSON</button>
 
@@ -181,7 +183,10 @@
 
     <div id="propertyPanel" hidden>
 
-        <h2>Properties</h2>
+        <div class="propertyPanelHeader">
+            <h2>Properties</h2>
+            <button id="btnCloseProperties" type="button" aria-label="Close Properties">×</button>
+        </div>
 
         <div id="nodeProperties">
 
@@ -284,6 +289,7 @@
             <section class="mediaSection" aria-labelledby="devicePictureHeading">
                 <h3 id="devicePictureHeading">Device Picture</h3>
                 <div id="propPicturePreview" class="mediaPreview picturePreview">No picture</div>
+                <small id="propPictureSizeInfo" class="pictureSizeInfo" aria-live="polite">Compressed automatically before saving.</small>
                 <button id="btnChangePicture" type="button">📁 From Computer</button>
                 <button id="btnTakePicture" type="button">📷 Camera</button>
                 <button id="btnRemovePicture" type="button">Remove Picture</button>
@@ -554,8 +560,8 @@
 
 </div>
 
-<script src="app.js?v=20260904-2"></script>
-<script type="module" src="firebase.js?v=20260904-2"></script>
+<script src="app.js?v=20260904-3"></script>
+<script type="module" src="firebase.js?v=20260904-3"></script>
 </body>
 
 </html>
