@@ -86,7 +86,9 @@ body{display:flex;flex-direction:column;}
 
 #toolbar{
 
-    height:58px;
+    position:relative;
+
+    height:50px;
 
     background:var(--toolbar-bg);
 
@@ -98,11 +100,11 @@ body{display:flex;flex-direction:column;}
 
     justify-content:space-between;
 
-    padding:0 15px;
+    padding:0 10px;
 
-    flex:0 0 58px;
+    flex:0 0 50px;
 
-    gap:12px;
+    gap:8px;
 
 }
 
@@ -136,7 +138,7 @@ body{display:flex;flex-direction:column;}
 
     display:flex;
 
-    gap:8px;
+    gap:5px;
 
     overflow-x:auto;
 
@@ -145,6 +147,9 @@ body{display:flex;flex-direction:column;}
     min-width:0;
 
 }
+
+.menuToggle{display:none;width:38px;height:34px;flex:0 0 38px;border:1px solid var(--border);border-radius:6px;background:var(--button-bg);color:var(--button-text);font-size:20px;line-height:1;cursor:pointer;}
+.menuToggle[hidden]{display:none;}
 
 .cloudAccount{display:flex;align-items:center;gap:8px;flex:0 0 auto;min-width:0;}
 .cloudAccount[hidden]{display:none;}
@@ -162,9 +167,9 @@ body{display:flex;flex-direction:column;}
 
 .tools button{
 
-    height:36px;
+    height:32px;
 
-    padding:0 18px;
+    padding:0 12px;
 
     background:var(--button-bg);
 
@@ -294,7 +299,7 @@ body{display:flex;flex-direction:column;}
 
     border-left:1px solid var(--border);
 
-    padding:20px;
+    padding:14px 16px 20px;
 
     overflow:auto;
 
@@ -302,9 +307,12 @@ body{display:flex;flex-direction:column;}
 
 #propertyPanel[hidden]{display:none;}
 
+.propertyPanelHeader{position:sticky;top:-14px;z-index:2;display:flex;align-items:center;justify-content:space-between;margin:0 -2px 10px;padding:12px 2px 8px;background:var(--panel-bg);border-bottom:1px solid var(--border);}
+.propertyPanelHeader #btnCloseProperties{display:grid;place-items:center;width:34px;height:34px;border:1px solid var(--border);border-radius:6px;background:var(--button-bg);color:var(--button-text);font-size:22px;line-height:1;cursor:pointer;}
+
 #propertyPanel h2{
 
-    margin-bottom:20px;
+    margin:0;
 
     color:#00d4ff;
 
@@ -335,6 +343,7 @@ body{display:flex;flex-direction:column;}
 .picturePreview{width:100%;height:150px;}
 .mediaPreview img{width:100%;height:100%;object-fit:contain;}
 .mediaPreview svg{max-width:100%;max-height:100%;}
+.pictureSizeInfo{display:block;margin-top:7px;color:var(--muted);font-size:11px;line-height:1.4;}
 
 .cameraContent{width:min(92vw,680px);}
 .cameraStage{display:flex;align-items:center;justify-content:center;width:100%;min-height:220px;max-height:60vh;overflow:hidden;border:1px solid var(--border);border-radius:7px;background:#050505;}
@@ -811,26 +820,53 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 }
 
 @media (max-width:1100px){
-    #toolbar{height:auto;min-height:58px;flex-basis:auto;align-items:flex-start;flex-direction:column;padding:8px 10px;gap:6px;}
+    #toolbar{height:auto;min-height:50px;flex-basis:auto;padding:7px 10px;gap:6px;}
+    body:not(.authenticated) #toolbar{align-items:flex-start;flex-direction:column;}
     .cloudAccount{width:100%;order:3;overflow-x:auto;padding-bottom:2px;}
     .tools{width:100%;padding-bottom:4px;}
     #workspace{height:auto;}
-    #propertyPanel{width:280px;}
+    #propertyPanel{width:300px;}
 }
+
+body.authenticated #toolbar{min-height:48px;flex:0 0 48px;flex-direction:row;align-items:center;}
+body.authenticated .menuToggle:not([hidden]){display:block;margin-left:auto;}
+body.authenticated .tools{position:absolute;right:8px;top:calc(100% - 2px);z-index:1200;display:none;width:min(90vw,300px);max-height:min(78dvh,620px);padding:8px;overflow-y:auto;overflow-x:hidden;border:1px solid var(--border);border-radius:8px;background:var(--panel-bg);box-shadow:0 12px 30px rgba(0,0,0,.38);}
+body.authenticated .tools.open{display:flex;flex-direction:column;align-items:stretch;}
+body.authenticated .tools>button{width:100%;height:38px;flex:0 0 38px;text-align:left;}
+body.authenticated .cloudAccount{display:grid;grid-template-columns:34px minmax(0,1fr);width:100%;gap:6px 9px;margin-bottom:3px;padding:5px 4px 10px;border-bottom:1px solid var(--border);overflow:visible;}
+body.authenticated .cloudUserPhoto,body.authenticated .cloudUserInitial{grid-row:1 / span 2;align-self:center;}
+body.authenticated .cloudUserText{max-width:none;}
+body.authenticated .cloudSaveStatus{max-width:none;}
+body.authenticated .cloudAccount button{grid-column:1 / -1;width:100%;}
 
 @media (max-width:720px){
     #workspace{position:relative;height:auto;}
     #devicePalette{position:absolute;left:0;top:0;bottom:0;width:min(78vw,250px);z-index:25;box-shadow:4px 0 14px rgba(0,0,0,.28);}
     #devicePalette.collapsed{width:48px;}
-    #propertyPanel{position:absolute;right:0;top:0;bottom:0;width:min(86vw,320px);z-index:20;box-shadow:-4px 0 14px rgba(0,0,0,.28);}
+    #propertyPanel{position:absolute;right:8px;top:8px;bottom:auto;width:min(88vw,310px);height:auto;max-height:calc(100% - 16px);max-height:min(76dvh,calc(100% - 16px));z-index:30;padding:10px 12px 16px;border:1px solid var(--border);border-radius:10px;box-shadow:-4px 6px 18px rgba(0,0,0,.34);overscroll-behavior:contain;}
+    .propertyPanelHeader{top:-10px;margin-bottom:6px;padding:8px 0 7px;}
+    .propertyPanelHeader h2{font-size:17px;}
     #diagramName{width:min(90vw,250px);}
-    .modalContent{width:min(92vw,320px);max-height:90vh;overflow:auto;}
+    .modalContent{width:min(92vw,320px);max-height:90vh;max-height:calc(100dvh - 20px);overflow:auto;}
     .tools button{padding:0 12px;white-space:nowrap;}
-    #propertyPanel input,#propertyPanel select,#propertyPanel textarea{font-size:16px;min-height:42px;}
-    .mediaSection button,#routeControls button{min-height:42px;padding:9px 12px;}
+    #propertyPanel label{margin-top:9px;margin-bottom:4px;font-size:12px;}
+    #propertyPanel input,#propertyPanel select,#propertyPanel textarea{min-height:40px;padding:8px;font-size:16px;}
+    #propertyPanel textarea{min-height:76px;}
+    .propertyGroup{margin-top:10px;padding:8px;}
+    .mediaSection{margin-top:12px;padding-top:11px;}
+    .picturePreview{height:120px;}
+    .mediaSection button,#routeControls button{min-height:40px;padding:8px 10px;}
     #statusDeviceList{grid-template-columns:1fr;}
     .cloudUserText{display:none;}
     .cloudSaveStatus{max-width:110px;}
+    body.authenticated .cloudUserText{display:flex;}
+    body.authenticated .cloudSaveStatus{max-width:none;}
+    body.authenticated .tools{right:6px;width:min(92vw,290px);max-height:calc(100dvh - 58px);}
+}
+
+@media (max-width:720px) and (orientation:landscape){
+    #propertyPanel{width:min(44vw,310px);max-height:calc(100% - 12px);top:6px;right:6px;}
+    body.authenticated .tools{max-height:calc(100dvh - 54px);}
 }
 
 .contextMenu div{
