@@ -36,6 +36,8 @@ const AUTO_SAVE_DELAY=1500;
 const MAX_CHUNK_BYTES=650000;
 const MAX_CHUNK_COUNT=400;
 const MAX_PHOTO_BYTES=450000;
+const PHOTO_VERIFICATION_TTL=7*24*60*60*1000;
+const PHOTO_VERIFICATION_CACHE_PREFIX="hotelNetworkDiagram.photoVerification.";
 const CHANGE_EVENT="hotel-network-diagram-change";
 const bridge=window.hotelNetworkDiagramCloudBridge;
 
@@ -61,6 +63,8 @@ let diagramExists=false;
 let knownRevision=null;
 let knownChunkCount=0;
 let knownPhotoIds=new Set();
+let verifiedPhotoIds=new Set();
+let photoLoadFailures=0;
 let saveTimer=null;
 let saveRunning=false;
 let saveQueued=false;
@@ -154,6 +158,68 @@ function parseImageDataUrl(value){
 
 function getBase64ByteLength(value){return Math.max(0,Math.floor(value.length*3/4)-(value.endsWith("==")?2:value.endsWith("=")?1:0));}
 
+function uint8ArrayToBase64(bytes){
+    let binary="";
+    for(let index=0;index<bytes.length;index+=0x8000)binary+=String.fromCharCode(...bytes.subarray(index,index+0x8000));
+    return btoa(binary);
+}
+
+function getFirestoreBytesBase64(value){
+    if(!value)return "";
+    if(typeof value.toBase64==="function")return value.toBase64();
+    if(typeof value.toUint8Array==="function")return uint8ArrayToBase64(value.toUint8Array());
+    return "";
+}
+
+function getPhotoVerificationCache(uid){
+    try{
+        const value=JSON.parse(localStorage.getItem(`${PHOTO_VERIFICATION_CACHE_PREFIX}${uid}`)||"{}");
+        return value&&typeof value==="object"?value:{};
+    }catch(error){console.warn("Ignoring an invalid photo verification cache",error);return {};}
+}
+
+function rememberVerifiedPhoto(uid,photoId,hash){
+    try{
+        const cache=getPhotoVerificationCache(uid);
+        cache[photoId]={hash,verifiedAt:Date.now()};
+        const entries=Object.entries(cache).sort((a,b)=>(b[1]?.verifiedAt||0)-(a[1]?.verifiedAt||0)).slice(0,250);
+        localStorage.setItem(`${PHOTO_VERIFICATION_CACHE_PREFIX}${uid}`,JSON.stringify(Object.fromEntries(entries)));
+    }catch(error){console.warn("Unable to cache photo verification",error);}
+}
+
+function hasFreshPhotoVerification(uid,photoId,hash){
+    const cached=getPhotoVerificationCache(uid)[photoId];
+    return cached?.hash===hash&&Date.now()-Number(cached.verifiedAt)<PHOTO_VERIFICATION_TTL;
+}
+
+function readVerifiedPhotoSnapshot(snapshot,expectedHash){
+    if(!snapshot.exists())return null;
+    const photo=snapshot.data()||{},base64=getFirestoreBytesBase64(photo.data);
+    if(!base64||hashString(base64)!==expectedHash||photo.hash!==expectedHash)return null;
+    const byteLength=getBase64ByteLength(base64);
+    if(byteLength>MAX_PHOTO_BYTES||Number(photo.byteLength)!==byteLength)return null;
+    const mimeType=/^image\/(png|jpeg|webp)$/i.test(photo.mimeType)?photo.mimeType.toLowerCase():"image/webp";
+    return{base64,mimeType,byteLength};
+}
+
+async function writeAndVerifyPhoto(uid,photo){
+    const reference=getPhotoRef(uid,photo.id);
+    await setDoc(reference,{data:photo.data,mimeType:photo.mimeType,byteLength:photo.byteLength,hash:photo.hash,updatedAt:serverTimestamp(),updatedBy:uid});
+    const verified=readVerifiedPhotoSnapshot(await getDoc(reference),photo.hash);
+    if(!verified)throw new Error("Foto device gagal diverifikasi di Firestore. Coba Save to Cloud lagi.");
+    verifiedPhotoIds.add(photo.id);rememberVerifiedPhoto(uid,photo.id,photo.hash);
+    return verified;
+}
+
+async function ensurePhotoDocument(uid,photo,{allowRepair=true}={}){
+    if(verifiedPhotoIds.has(photo.id))return{written:false,verified:null};
+    const reference=getPhotoRef(uid,photo.id),snapshot=await getDoc(reference);
+    const verified=readVerifiedPhotoSnapshot(snapshot,photo.hash);
+    if(verified){verifiedPhotoIds.add(photo.id);rememberVerifiedPhoto(uid,photo.id,photo.hash);return{written:false,verified};}
+    if(!allowRepair||!photo.data)return{written:false,verified:null};
+    return{written:true,verified:await writeAndVerifyPhoto(uid,photo)};
+}
+
 function prepareCloudDiagram(diagramData){
     const photos=[];
     const cloudData={...diagramData,nodes:(Array.isArray(diagramData.nodes)?diagramData.nodes:[]).map(node=>{
@@ -163,7 +229,7 @@ function prepareCloudDiagram(diagramData){
         const byteLength=getBase64ByteLength(parsed.base64);
         if(byteLength>MAX_PHOTO_BYTES)throw new Error("Foto device lama terlalu besar untuk Firestore. Pilih ulang foto agar dikompres otomatis.");
         const hash=hashString(parsed.base64),id=`device-${hashString(String(node.id||"device"))}-${hash}`;
-        photos.push({id,hash,mimeType:parsed.mimeType,byteLength,data:Bytes.fromBase64String(parsed.base64)});
+        photos.push({id,hash,mimeType:parsed.mimeType,byteLength,data:Bytes.fromBase64String(parsed.base64),base64:parsed.base64});
         return{...cloudNode,pictureId:id,pictureHash:hash};
     })};
     return{cloudData,photos};
@@ -184,15 +250,22 @@ function getCachedPictureMap(user){
 async function hydrateCloudDiagram(serialized,user,metadata){
     const layout=typeof serialized==="string"?JSON.parse(serialized):serialized;
     const cachedPictures=getCachedPictureMap(user),referencedIds=new Set();
+    photoLoadFailures=0;
     await runLimited((Array.isArray(layout?.nodes)?layout.nodes:[]).map(node=>async()=>{
         if(!node.pictureId||!node.pictureHash)return;
         referencedIds.add(node.pictureId);
         const cached=cachedPictures.get(node.id);
-        if(cached?.hash===node.pictureHash){node.pictureData=cached.data;return;}
-        const snapshot=await getDoc(getPhotoRef(user.uid,node.pictureId));
-        if(!snapshot.exists())return;
-        const photo=snapshot.data()||{},mimeType=/^image\/(png|jpeg|webp)$/i.test(photo.mimeType)?photo.mimeType:"image/webp";
-        if(photo.data&&typeof photo.data.toBase64==="function")node.pictureData=`data:${mimeType};base64,${photo.data.toBase64()}`;
+        if(cached?.hash===node.pictureHash){
+            node.pictureData=cached.data;
+            if(hasFreshPhotoVerification(user.uid,node.pictureId,node.pictureHash)){verifiedPhotoIds.add(node.pictureId);return;}
+            const parsed=parseImageDataUrl(cached.data);
+            const repaired=await ensurePhotoDocument(user.uid,{id:node.pictureId,hash:node.pictureHash,mimeType:parsed.mimeType,byteLength:getBase64ByteLength(parsed.base64),data:Bytes.fromBase64String(parsed.base64)});
+            if(!repaired.verified)photoLoadFailures++;
+            return;
+        }
+        const result=await ensurePhotoDocument(user.uid,{id:node.pictureId,hash:node.pictureHash},{allowRepair:false});
+        if(!result.verified){photoLoadFailures++;return;}
+        node.pictureData=`data:${result.verified.mimeType};base64,${result.verified.base64}`;
     }));
     knownPhotoIds=new Set(Array.isArray(metadata.photoIds)?metadata.photoIds.filter(id=>typeof id==="string"):referencedIds);
     return layout;
@@ -269,7 +342,10 @@ async function saveNow({manual=false}={}){
         if(chunks.length>MAX_CHUNK_COUNT)throw new Error("Diagram terlalu besar untuk penyimpanan cloud.");
         newRevision=`${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
         newChunkCount=chunks.length;
-        await runLimited(photos.filter(photo=>!knownPhotoIds.has(photo.id)).map(photo=>async()=>{await setDoc(getPhotoRef(savingUser.uid,photo.id),{data:photo.data,mimeType:photo.mimeType,byteLength:photo.byteLength,hash:photo.hash,updatedAt:serverTimestamp(),updatedBy:savingUser.uid});writtenPhotoIds.push(photo.id);}));
+        await runLimited(photos.map(photo=>async()=>{
+            const result=await ensurePhotoDocument(savingUser.uid,photo);
+            if(result.written)writtenPhotoIds.push(photo.id);
+        }));
         await runLimited(chunks.map((data,index)=>()=>setDoc(getChunkRef(savingUser.uid,newRevision,index),{revision:newRevision,index,data})));
         if(currentUser?.uid!==savingUser.uid)throw new Error("Sesi pengguna berubah saat menyimpan.");
         const nextPhotoIds=photos.map(photo=>photo.id);
@@ -277,7 +353,7 @@ async function saveNow({manual=false}={}){
         if(diagramExists)metadata.diagramData=deleteField();
         else metadata.createdAt=serverTimestamp();
         await setDoc(getDiagramRef(savingUser.uid),metadata,{merge:true});
-        diagramExists=true;knownRevision=newRevision;knownChunkCount=chunks.length;knownPhotoIds=new Set(nextPhotoIds);
+        diagramExists=true;knownRevision=newRevision;knownChunkCount=chunks.length;knownPhotoIds=new Set(nextPhotoIds);verifiedPhotoIds=new Set(nextPhotoIds);
         setSaveStatus(`✓ Saved ${formatTime()}`,"saved");
         if(previousChunkCount&&previousRevision!==newRevision)deleteChunks(savingUser.uid,previousRevision,previousChunkCount).catch(error=>console.warn("Old diagram chunks could not be removed",error));
         const stalePhotoIds=[...previousPhotoIds].filter(id=>!knownPhotoIds.has(id));
@@ -293,7 +369,7 @@ async function saveNow({manual=false}={}){
 }
 
 async function handleAuthenticatedUser(user,generation){
-    currentUser=user;diagramReady=false;diagramExists=false;knownRevision=null;knownChunkCount=0;knownPhotoIds=new Set();
+    currentUser=user;diagramReady=false;diagramExists=false;knownRevision=null;knownChunkCount=0;knownPhotoIds=new Set();verifiedPhotoIds=new Set();photoLoadFailures=0;
     bridge.setStorageUser(user.uid);setUserDisplay(user);authMessage.textContent="Memuat diagram Anda...";signInButton.disabled=true;
     let cloudLoaded=false;
     let cloudError=null;
@@ -303,6 +379,7 @@ async function handleAuthenticatedUser(user,generation){
     if(!cloudLoaded)loadLocalFallback(user);
     diagramReady=true;showAuthenticatedApp(user);
     if(cloudError){setSaveStatus("⚠ Save failed","error");bridge.showFeedback(`${getCloudErrorMessage(cloudError)} Diagram lokal tetap dapat digunakan.`,true);}
+    else if(cloudLoaded&&photoLoadFailures){setSaveStatus(`⚠ ${photoLoadFailures} foto belum sinkron`,"error");bridge.showFeedback(`${photoLoadFailures} foto cloud tidak ditemukan. Buka aplikasi pada perangkat asal lalu klik Save to Cloud untuk memperbaikinya.`,true);}
     else if(cloudLoaded)setSaveStatus("✓ Cloud loaded","saved");
     else{setSaveStatus("Unsaved changes","unsaved");await saveNow();}
 }
@@ -310,7 +387,7 @@ async function handleAuthenticatedUser(user,generation){
 async function handleAuthState(user){
     const generation=++authGeneration;
     clearTimeout(saveTimer);saveTimer=null;saveQueued=false;diagramReady=false;
-    if(!user){currentUser=null;knownPhotoIds=new Set();bridge.setStorageUser(null);showLogin();return;}
+    if(!user){currentUser=null;knownPhotoIds=new Set();verifiedPhotoIds=new Set();photoLoadFailures=0;bridge.setStorageUser(null);showLogin();return;}
     await handleAuthenticatedUser(user,generation);
 }
 
