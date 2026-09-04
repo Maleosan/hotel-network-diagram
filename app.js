@@ -59,6 +59,8 @@ const MAX_NODE_WIDTH = 400;
 const MIN_NODE_HEIGHT = 50;
 const MAX_NODE_HEIGHT = 300;
 const GRID_SIZE = 20;
+const MIN_ZOOM = .1;
+const MAX_ZOOM = 4;
 
 let gridEnabled = true;
 let snapEnabled = true;
@@ -72,7 +74,9 @@ let pendingDeviceIconData="";
 let cameraStream=null;
 let cameraTargetNode=null;
 let capturedDevicePhotoData="";
+let capturedDevicePhotoInfo=null;
 let cameraSessionId=0;
+const devicePictureInfo=new Map();
 const DEVICE_LIBRARY={
     router:{category:"Network",label:"Router",icon:"router",ports:5,models:["Generic Router","Branch Router"]},
     core_router:{category:"Network",label:"Core Router",icon:"router",ports:8,models:["Core Router","High Capacity Router"]},
@@ -617,6 +621,75 @@ function processImageFile(file,maxWidth,maxHeight,quality=.82){
     });
 }
 
+function getDataUrlByteSize(dataUrl){
+    if(!isSafeImageData(dataUrl))return 0;
+    const encoded=dataUrl.slice(dataUrl.indexOf(",")+1);
+    return Math.max(0,Math.floor(encoded.length*3/4)-(encoded.endsWith("==")?2:encoded.endsWith("=")?1:0));
+}
+
+function formatByteSize(bytes){
+    if(!Number.isFinite(bytes)||bytes<=0)return "0 KB";
+    if(bytes<1024)return `${Math.round(bytes)} B`;
+    if(bytes<1024*1024)return `${Math.round(bytes/1024)} KB`;
+    return `${(bytes/(1024*1024)).toFixed(1)} MB`;
+}
+
+let webpSupport;
+function supportsWebP(){
+    if(typeof webpSupport==="boolean")return webpSupport;
+    try{const canvas=document.createElement("canvas");canvas.width=canvas.height=1;webpSupport=canvas.toDataURL("image/webp",.8).startsWith("data:image/webp");}
+    catch(error){webpSupport=false;}
+    return webpSupport;
+}
+
+function blobToDataUrl(blob){
+    return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onerror=()=>reject(new Error("Gambar terkompresi tidak dapat dibaca"));reader.onload=()=>resolve(String(reader.result||""));reader.readAsDataURL(blob);});
+}
+
+async function encodeCanvas(canvas,mimeType,quality){
+    if(canvas.toBlob){
+        const blob=await new Promise(resolve=>canvas.toBlob(resolve,mimeType,quality));
+        if(blob){const data=await blobToDataUrl(blob);return{data,bytes:blob.size,mimeType:blob.type||mimeType};}
+    }
+    const data=canvas.toDataURL(mimeType,quality);
+    return{data,bytes:getDataUrlByteSize(data),mimeType:data.slice(5,data.indexOf(";"))||mimeType};
+}
+
+async function compressDeviceImage(source,sourceWidth,sourceHeight){
+    const maxWidth=1200,maxHeight=900,targetBytes=250*1024,mimeType=supportsWebP()?"image/webp":"image/jpeg";
+    let width=Math.max(1,Math.round(sourceWidth*Math.min(1,maxWidth/sourceWidth,maxHeight/sourceHeight)));
+    let height=Math.max(1,Math.round(sourceHeight*Math.min(1,maxWidth/sourceWidth,maxHeight/sourceHeight)));
+    let quality=.84,result=null;
+    for(let attempt=0;attempt<12;attempt++){
+        const canvas=document.createElement("canvas");canvas.width=width;canvas.height=height;
+        const context=canvas.getContext("2d");
+        if(!context)throw new Error("Browser tidak mendukung pemrosesan gambar");
+        context.imageSmoothingEnabled=true;context.imageSmoothingQuality="high";context.drawImage(source,0,0,width,height);
+        result={...(await encodeCanvas(canvas,mimeType,quality)),width,height,quality};
+        if(result.bytes<=targetBytes)break;
+        if(quality>.7)quality=Math.max(.7,quality-.06);
+        else{
+            const scale=Math.max(.72,Math.sqrt(targetBytes/result.bytes)*.96);
+            const nextWidth=Math.max(320,Math.round(width*scale)),nextHeight=Math.max(240,Math.round(height*scale));
+            if(nextWidth===width&&nextHeight===height)break;
+            width=nextWidth;height=nextHeight;quality=.8;
+        }
+    }
+    if(!result||!isSafeImageData(result.data))throw new Error("Gambar gagal dikompres");
+    return result;
+}
+
+async function compressDevicePictureFile(file){
+    if(!file||!/^image\/(png|jpeg|webp|svg\+xml)$/i.test(file.type))throw new Error("Pilih file PNG, JPG, SVG, atau WEBP");
+    if(file.size>8*1024*1024)throw new Error("Ukuran gambar maksimal 8 MB");
+    const url=URL.createObjectURL(file),image=new Image();
+    try{
+        await new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=()=>reject(new Error("File gambar rusak atau tidak didukung"));image.src=url;});
+        const result=await compressDeviceImage(image,image.naturalWidth||1,image.naturalHeight||1);
+        return{...result,originalBytes:file.size,originalWidth:image.naturalWidth||1,originalHeight:image.naturalHeight||1};
+    }finally{URL.revokeObjectURL(url);}
+}
+
 function stopCameraStream(){
     if(cameraStream) cameraStream.getTracks().forEach(track=>track.stop());
     cameraStream=null;
@@ -643,7 +716,7 @@ async function openDeviceCamera(target){
     if(!target||!nodes.includes(target)) return;
     const modal=document.getElementById("cameraModal"),video=document.getElementById("cameraPreview"),photo=document.getElementById("cameraPhotoPreview"),status=document.getElementById("cameraStatus"),capture=document.getElementById("btnCapturePhoto");
     stopCameraStream();
-    cameraTargetNode=target;capturedDevicePhotoData="";photo.removeAttribute("src");capture.disabled=true;setCameraCaptureState(false);status.textContent="Requesting camera permission...";modal.style.display="flex";
+    cameraTargetNode=target;capturedDevicePhotoData="";capturedDevicePhotoInfo=null;photo.removeAttribute("src");capture.disabled=true;setCameraCaptureState(false);status.textContent="Requesting camera permission...";modal.style.display="flex";
     const session=++cameraSessionId;
     if(!navigator.mediaDevices?.getUserMedia){status.textContent="Camera access is not supported by this browser.";return;}
     if(window.isSecureContext===false){status.textContent="Camera access requires a secure HTTPS connection.";return;}
@@ -659,27 +732,26 @@ async function openDeviceCamera(target){
     }
 }
 
-function captureDevicePhoto(){
+async function captureDevicePhoto(){
     const video=document.getElementById("cameraPreview"),canvas=document.getElementById("cameraCaptureCanvas"),photo=document.getElementById("cameraPhotoPreview"),status=document.getElementById("cameraStatus");
     if(!cameraStream||!video.videoWidth||!video.videoHeight){status.textContent="Camera preview is not ready yet.";return;}
-    const scale=Math.min(1,800/video.videoWidth,600/video.videoHeight);
-    canvas.width=Math.max(1,Math.round(video.videoWidth*scale));canvas.height=Math.max(1,Math.round(video.videoHeight*scale));
-    const context=canvas.getContext("2d");
-    if(!context){status.textContent="This browser cannot capture the camera image.";return;}
-    context.drawImage(video,0,0,canvas.width,canvas.height);
-    try{capturedDevicePhotoData=canvas.toDataURL("image/jpeg",.8);}catch(error){capturedDevicePhotoData="";status.textContent="The captured photo could not be processed.";return;}
-    if(!isSafeImageData(capturedDevicePhotoData)){capturedDevicePhotoData="";status.textContent="The captured photo could not be processed.";return;}
-    photo.src=capturedDevicePhotoData;setCameraCaptureState(true);status.textContent="Photo captured. Use it, retake it, or cancel without changing the existing picture.";
+    const capture=document.getElementById("btnCapturePhoto");capture.disabled=true;status.textContent="Compressing photo…";
+    try{
+        const result=await compressDeviceImage(video,video.videoWidth,video.videoHeight);
+        capturedDevicePhotoData=result.data;capturedDevicePhotoInfo=result;
+        canvas.width=result.width;canvas.height=result.height;
+        photo.src=result.data;setCameraCaptureState(true);status.textContent=`Compressed to ${result.width}×${result.height} ${result.mimeType==="image/webp"?"WebP":"JPEG"} (${formatByteSize(result.bytes)}).`;
+    }catch(error){capturedDevicePhotoData="";capturedDevicePhotoInfo=null;status.textContent=error.message||"The captured photo could not be processed.";capture.disabled=false;}
 }
 
 function retakeDevicePhoto(){
-    capturedDevicePhotoData="";document.getElementById("cameraPhotoPreview").removeAttribute("src");setCameraCaptureState(false);
+    capturedDevicePhotoData="";capturedDevicePhotoInfo=null;document.getElementById("cameraPhotoPreview").removeAttribute("src");setCameraCaptureState(false);
     document.getElementById("btnCapturePhoto").disabled=!cameraStream;document.getElementById("cameraStatus").textContent=cameraStream?"Camera ready. Capture a new photo.":"Camera is no longer available.";
     document.getElementById("cameraPreview").play().catch(()=>{});
 }
 
 function closeDeviceCamera(restoreFocus=true){
-    cameraSessionId++;stopCameraStream();capturedDevicePhotoData="";cameraTargetNode=null;
+    cameraSessionId++;stopCameraStream();capturedDevicePhotoData="";capturedDevicePhotoInfo=null;cameraTargetNode=null;
     const modal=document.getElementById("cameraModal"),photo=document.getElementById("cameraPhotoPreview");modal.style.display="none";photo.removeAttribute("src");setCameraCaptureState(false);
     if(restoreFocus&&document.getElementById("btnTakePicture")) document.getElementById("btnTakePicture").focus();
 }
@@ -687,7 +759,9 @@ function closeDeviceCamera(restoreFocus=true){
 function useCapturedDevicePhoto(){
     const target=cameraTargetNode,data=capturedDevicePhotoData;
     if(!target||!nodes.includes(target)||!isSafeImageData(data)){document.getElementById("cameraStatus").textContent="No captured photo is available.";return;}
-    recordHistory();target.pictureData=data;if(selectedNode===target)updateNodeMediaPreviews();saveToLocalStorage();closeDeviceCamera();showFeedback("Camera photo added to the device.",false);
+    recordHistory();target.pictureData=data;
+    if(capturedDevicePhotoInfo)devicePictureInfo.set(target.id,`Camera ${capturedDevicePhotoInfo.width}×${capturedDevicePhotoInfo.height} → ${formatByteSize(capturedDevicePhotoInfo.bytes)} (${capturedDevicePhotoInfo.mimeType==="image/webp"?"WebP":"JPEG"})`);
+    if(selectedNode===target)updateNodeMediaPreviews();saveToLocalStorage();closeDeviceCamera();showFeedback("Camera photo compressed and added to the device.",false);
 }
 
 function normalizeBackground(background){
@@ -771,10 +845,30 @@ function resetView(){
 }
 
 function fitView(){
-    const bounds=getDiagramBounds(),rect=svg.getBoundingClientRect();
-    if(!rect.width||!rect.height)return;
-    const padding=30,nextZoom=Math.min(4,Math.max(.3,Math.min((rect.width-padding*2)/bounds.width,(rect.height-padding*2)/bounds.height)));
-    zoom=nextZoom;viewX=rect.width/2-(bounds.x+bounds.width/2)*zoom;viewY=rect.height/2-(bounds.y+bounds.height/2)*zoom;updateView();saveToLocalStorage();showFeedback("Diagram fitted to view");
+    const bounds=getDiagramBounds(),metrics=getFitViewportMetrics();
+    if(!metrics.width||!metrics.height)return;
+    const padding=Math.max(34,Math.min(80,Math.min(metrics.width,metrics.height)*.1));
+    const usableWidth=Math.max(1,metrics.width-padding*2),usableHeight=Math.max(1,metrics.height-padding*2);
+    zoom=Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,Math.min(usableWidth/bounds.width,usableHeight/bounds.height)));
+    viewX=metrics.left+metrics.width/2-(bounds.x+bounds.width/2)*zoom;
+    viewY=metrics.top+metrics.height/2-(bounds.y+bounds.height/2)*zoom;
+    updateView();saveToLocalStorage();showFeedback(`Diagram fitted to view (${Math.round(zoom*100)}%)`);
+}
+
+function getFitViewportMetrics(){
+    const rect=svg.getBoundingClientRect();
+    let left=0,right=0,top=0,bottom=0;
+    [document.getElementById("devicePalette"),document.getElementById("propertyPanel")].forEach(panel=>{
+        if(!panel||panel.hidden||getComputedStyle(panel).position!=="absolute")return;
+        const panelRect=panel.getBoundingClientRect();
+        const overlapWidth=Math.max(0,Math.min(rect.right,panelRect.right)-Math.max(rect.left,panelRect.left));
+        const overlapHeight=Math.max(0,Math.min(rect.bottom,panelRect.bottom)-Math.max(rect.top,panelRect.top));
+        if(overlapWidth<=0||overlapHeight<=0)return;
+        if(panelRect.left<=rect.left+rect.width/2)left=Math.max(left,overlapWidth+8);
+        else right=Math.max(right,overlapWidth+8);
+    });
+    if(rect.width-left-right<96){left=Math.min(left,rect.width*.25);right=Math.min(right,rect.width*.25);}
+    return{left,top,width:Math.max(1,rect.width-left-right),height:Math.max(1,rect.height-top-bottom)};
 }
 
 function render(){
@@ -1935,6 +2029,8 @@ function updateNodeMediaPreviews(){
     const iconPreview=document.getElementById("propIconPreview");
     if(selectedNode.iconType==="custom")setPreview(iconPreview,selectedNode.iconData,"Default icon");else setDefaultIconPreview(iconPreview,selectedNode);
     setPreview(document.getElementById("propPicturePreview"),selectedNode.pictureData,"No picture");
+    const sizeInfo=document.getElementById("propPictureSizeInfo"),bytes=getDataUrlByteSize(selectedNode.pictureData);
+    sizeInfo.textContent=devicePictureInfo.get(selectedNode.id)||(bytes?`Stored compressed image: ${formatByteSize(bytes)}.`:"Compressed automatically before saving.");
     document.getElementById("btnResetIcon").disabled=selectedNode.iconType!=="custom";
     document.getElementById("btnChangePicture").textContent=selectedNode.pictureData?"📁 Change from Computer":"📁 From Computer";
     document.getElementById("btnRemovePicture").disabled=!selectedNode.pictureData;
@@ -2067,7 +2163,7 @@ function moveCanvasGesture(e){
     if(pinchState&&touchPoints.size>=2){
         const points=[...touchPoints.values()].slice(0,2),distance=Math.hypot(points[1].x-points[0].x,points[1].y-points[0].y);
         const center={x:(points[0].x+points[1].x)/2,y:(points[0].y+points[1].y)/2},rect=svg.getBoundingClientRect();
-        zoom=Math.min(4,Math.max(.3,pinchState.zoom*(distance/(pinchState.distance||1))));
+        zoom=Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,pinchState.zoom*(distance/(pinchState.distance||1))));
         viewX=center.x-rect.left-pinchState.worldX*zoom;viewY=center.y-rect.top-pinchState.worldY*zoom;updateView();
         e.preventDefault();e.stopPropagation();return;
     }
@@ -2295,7 +2391,7 @@ document.addEventListener("wheel",function(e){
     const py=e.clientY-rect.top;
     const worldX=(px-viewX)/zoom;
     const worldY=(py-viewY)/zoom;
-    const next=Math.min(4,Math.max(.3,zoom*(e.deltaY<0?1.1:1/1.1)));
+    const next=Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,zoom*(e.deltaY<0?1.1:1/1.1)));
     zoom=next;
     viewX=px-worldX*zoom;
     viewY=py-worldY*zoom;
@@ -2584,6 +2680,7 @@ function loadLayout(data){
     });
 
     nodes.splice(0,nodes.length,...nextNodes);
+    devicePictureInfo.clear();
     links.splice(0,links.length,...nextLinks);
     const nextAnnotations=(Array.isArray(layout.annotations)?layout.annotations:[]).flatMap(raw=>{
         if(!raw||!Number.isFinite(Number(raw.x))||!Number.isFinite(Number(raw.y)))return[];
@@ -2593,7 +2690,7 @@ function loadLayout(data){
     });
     annotations.splice(0,annotations.length,...nextAnnotations);
     statusSummaryTypes=(Array.isArray(layout.statusSummaryTypes)?layout.statusSummaryTypes:[]).filter(type=>DEVICE_TYPES.has(type));
-    zoom=Number.isFinite(Number(layout.zoom))?Math.min(4,Math.max(.3,Number(layout.zoom))):1;
+    zoom=Number.isFinite(Number(layout.zoom))?Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,Number(layout.zoom))):1;
     viewX=Number.isFinite(Number(layout.viewX))?Number(layout.viewX):0;
     viewY=Number.isFinite(Number(layout.viewY))?Number(layout.viewY):0;
     diagramName=String(layout.diagramName||"HOTEL NETWORK DIAGRAM").slice(0,80);
@@ -2667,6 +2764,12 @@ function getDiagramBounds(){
     annotations.forEach(annotation=>{
         const width=annotation.type==="image"?annotation.width:Math.max(80,String(annotation.text||"").length*10),height=annotation.type==="image"?annotation.height:30;
         minX=Math.min(minX,annotation.x);minY=Math.min(minY,annotation.y-height);maxX=Math.max(maxX,annotation.x+width);maxY=Math.max(maxY,annotation.y+height);
+    });
+    links.forEach(link=>{
+        (Array.isArray(link.route)?link.route:[]).forEach(point=>{
+            if(!Number.isFinite(Number(point.x))||!Number.isFinite(Number(point.y)))return;
+            minX=Math.min(minX,Number(point.x));minY=Math.min(minY,Number(point.y));maxX=Math.max(maxX,Number(point.x));maxY=Math.max(maxY,Number(point.y));
+        });
     });
 
     return{
@@ -3056,6 +3159,19 @@ const btnTheme=document.getElementById("btnTheme");
 const btnExportSVG=document.getElementById("btnExportSVG");
 const btnBackground=document.getElementById("btnBackground");
 const btnDiagramSettings=document.getElementById("btnDiagramSettings");
+const btnMenuToggle=document.getElementById("btnMenuToggle");
+const toolbarMenu=document.getElementById("toolbarMenu");
+
+function setToolbarMenuOpen(open){
+    if(!toolbarMenu||!btnMenuToggle)return;
+    toolbarMenu.classList.toggle("open",Boolean(open));btnMenuToggle.setAttribute("aria-expanded",String(Boolean(open)));
+    btnMenuToggle.setAttribute("aria-label",open?"Close tools menu":"Open tools menu");
+}
+
+btnMenuToggle?.addEventListener("click",event=>{event.stopPropagation();setToolbarMenuOpen(!toolbarMenu.classList.contains("open"));});
+toolbarMenu?.addEventListener("click",event=>{if(document.body.classList.contains("authenticated")&&event.target.closest("button"))setToolbarMenuOpen(false);});
+document.addEventListener("pointerdown",event=>{if(toolbarMenu?.classList.contains("open")&&!toolbarMenu.contains(event.target)&&event.target!==btnMenuToggle)setToolbarMenuOpen(false);});
+document.getElementById("btnCloseProperties")?.addEventListener("click",hideProperties);
 
 const deviceModal=document.getElementById("deviceModal");
 const statusCheckModal=document.getElementById("statusCheckModal");
@@ -3459,11 +3575,16 @@ document.getElementById("btnChangePicture").onclick=()=>propPictureFile.click();
 document.getElementById("btnTakePicture").onclick=function(){if(selectedNode)openDeviceCamera(selectedNode);};
 propPictureFile.addEventListener("change",async function(){
     const file=this.files[0],target=selectedNode;this.value="";if(!file||!target)return;
-    try{const data=await processImageFile(file,800,600,.8);if(!nodes.includes(target))return;recordHistory();target.pictureData=data;if(selectedNode===target)updateNodeMediaPreviews();saveToLocalStorage();}
+    const sizeInfo=document.getElementById("propPictureSizeInfo");sizeInfo.textContent=`Compressing ${formatByteSize(file.size)}…`;
+    try{
+        const result=await compressDevicePictureFile(file);if(!nodes.includes(target))return;
+        recordHistory();target.pictureData=result.data;devicePictureInfo.set(target.id,`Original ${formatByteSize(result.originalBytes)} → ${formatByteSize(result.bytes)} · ${result.width}×${result.height} · ${result.mimeType==="image/webp"?"WebP":"JPEG"}`);
+        if(selectedNode===target)updateNodeMediaPreviews();saveToLocalStorage();showFeedback(`Device photo compressed: ${formatByteSize(result.originalBytes)} → ${formatByteSize(result.bytes)}.`,false);
+    }
     catch(error){showFeedback(error.message,true);}
 });
 document.getElementById("btnRemovePicture").onclick=function(){
-    if(!selectedNode||!selectedNode.pictureData)return;recordHistory();selectedNode.pictureData="";updateNodeMediaPreviews();saveToLocalStorage();
+    if(!selectedNode||!selectedNode.pictureData)return;recordHistory();devicePictureInfo.delete(selectedNode.id);selectedNode.pictureData="";updateNodeMediaPreviews();saveToLocalStorage();
 };
 document.getElementById("btnCapturePhoto").onclick=captureDevicePhoto;
 document.getElementById("btnRetakePhoto").onclick=retakeDevicePhoto;
@@ -3523,6 +3644,7 @@ function getNextDevicePosition(){
 document.addEventListener("keydown",function(e){
 
     if(e.key==="Escape"){
+        if(toolbarMenu?.classList.contains("open")){setToolbarMenuOpen(false);btnMenuToggle.focus();return;}
         if(pendingAnnotation){pendingAnnotation=null;document.getElementById("statusBar").textContent="Ready";}
         if(cameraModal.style.display==="flex"){closeDeviceCamera();return;}
         if(deviceModal.style.display==="flex"){deviceModal.style.display="none";btnAddDevice.focus();}
