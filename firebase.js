@@ -223,7 +223,7 @@ async function ensurePhotoDocument(uid,photo,{allowRepair=true}={}){
 function prepareCloudDiagram(diagramData){
     const photos=[];
     const cloudData={...diagramData,nodes:(Array.isArray(diagramData.nodes)?diagramData.nodes:[]).map(node=>{
-        const {pictureData,...cloudNode}=node;
+        const {pictureData,pictureId,pictureHash,...cloudNode}=node;
         const parsed=parseImageDataUrl(pictureData);
         if(!parsed)return cloudNode;
         const byteLength=getBase64ByteLength(parsed.base64);
