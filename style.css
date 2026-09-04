@@ -361,7 +361,7 @@ body{display:flex;flex-direction:column;}
 .githubSaveContent{width:min(92vw,460px);}
 .githubSaveContent p{line-height:1.45;color:var(--muted);}
 .githubSaveContent label{display:block;margin:12px 0 6px;}
-.githubSaveContent input{width:100%;height:38px;background:var(--field-bg);color:var(--text);border:1px solid var(--border);}
+.githubSaveContent input,.githubSaveContent select{width:100%;height:38px;padding:0 9px;background:var(--field-bg);color:var(--text);border:1px solid var(--border);border-radius:5px;}
 .githubSaveContent small{display:block;margin-top:7px;color:var(--muted);line-height:1.4;}
 .githubUpdateInfo{margin:15px 0 0;padding:12px;border:1px solid var(--border);border-radius:6px;background:var(--field-bg);font-size:12px;line-height:1.45;}
 .githubUpdateInfo dt{margin-top:8px;color:var(--muted);font-weight:600;}.githubUpdateInfo dt:first-child{margin-top:0;}
