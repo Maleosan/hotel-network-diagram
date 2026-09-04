@@ -2467,7 +2467,9 @@ const USER_LOCAL_STORAGE_PREFIX=`${LOCAL_STORAGE_KEY}.user`;
 const LEGACY_CACHE_OWNER_KEY=`${LOCAL_STORAGE_KEY}.legacyOwner`;
 const SHARED_DIAGRAM_REPOSITORY="Maleosan/hotel-network-diagram";
 const SHARED_DIAGRAM_BRANCH="main";
-const SHARED_DIAGRAM_PATH="data/HOTEL-NETWORK-DIAGRAM (10).json";
+const SHARED_DIAGRAM_DIRECTORY="data";
+const DEFAULT_SHARED_DIAGRAM_PATH="data/HOTEL-NETWORK-DIAGRAM (10).json";
+let sharedDiagramPath=DEFAULT_SHARED_DIAGRAM_PATH;
 let activeLocalStorageKey=LOCAL_STORAGE_KEY;
 
 function getUserLocalStorageKey(uid){
@@ -2478,16 +2480,36 @@ function setLocalStorageUser(uid){
     activeLocalStorageKey=uid?getUserLocalStorageKey(uid):LOCAL_STORAGE_KEY;
 }
 
-function getSharedDiagramUrl(){
-    const encodedPath=SHARED_DIAGRAM_PATH.split("/").map(segment=>
+function normalizeSharedDiagramPath(path){
+    const value=String(path||"");
+    return /^data\/[^/]+\.json$/i.test(value)?value:DEFAULT_SHARED_DIAGRAM_PATH;
+}
+
+function getSharedDiagramUrl(path=sharedDiagramPath){
+    const encodedPath=normalizeSharedDiagramPath(path).split("/").map(segment=>
         encodeURIComponent(segment).replace(/[()]/g,character=>`%${character.charCodeAt(0).toString(16).toUpperCase()}`)
     ).join("/");
     return `https://raw.githubusercontent.com/${SHARED_DIAGRAM_REPOSITORY}/${SHARED_DIAGRAM_BRANCH}/${encodedPath}?cb=${Date.now()}`;
 }
 
-function getSharedDiagramCommitsUrl(){
-    const query=new URLSearchParams({path:SHARED_DIAGRAM_PATH,sha:SHARED_DIAGRAM_BRANCH,per_page:"1",cb:String(Date.now())});
+function getSharedDiagramCommitsUrl(path=sharedDiagramPath){
+    const query=new URLSearchParams({path:normalizeSharedDiagramPath(path),sha:SHARED_DIAGRAM_BRANCH,per_page:"1",cb:String(Date.now())});
     return `https://api.github.com/repos/${SHARED_DIAGRAM_REPOSITORY}/commits?${query}`;
+}
+
+function getSharedDiagramDirectoryUrl(){
+    const directory=encodeURIComponent(SHARED_DIAGRAM_DIRECTORY),query=new URLSearchParams({ref:SHARED_DIAGRAM_BRANCH,cb:String(Date.now())});
+    return `https://api.github.com/repos/${SHARED_DIAGRAM_REPOSITORY}/contents/${directory}?${query}`;
+}
+
+async function fetchSharedDiagramFiles(){
+    const response=await fetch(getSharedDiagramDirectoryUrl(),{cache:"no-store",headers:{Accept:"application/vnd.github+json"}});
+    if(!response.ok)throw new Error(`GitHub file list failed (${response.status})`);
+    const entries=await response.json();
+    if(!Array.isArray(entries))throw new Error("GitHub data folder response is invalid");
+    const files=entries.filter(entry=>entry?.type==="file"&&/^data\/[^/]+\.json$/i.test(entry.path||"")).map(entry=>({name:String(entry.name||entry.path.split("/").pop()),path:entry.path})).sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true,sensitivity:"base"}));
+    if(!files.length)throw new Error("No JSON diagram files were found in the GitHub data folder");
+    return files;
 }
 
 function formatGitHubDate(date){
@@ -2495,8 +2517,8 @@ function formatGitHubDate(date){
 }
 
 let sharedDiagramUpdatedAt=null;
-async function fetchSharedDiagramUpdatedAt(){
-    const response=await fetch(getSharedDiagramCommitsUrl(),{cache:"no-store",headers:{Accept:"application/vnd.github+json"}});
+async function fetchSharedDiagramUpdatedAt(path=sharedDiagramPath){
+    const response=await fetch(getSharedDiagramCommitsUrl(path),{cache:"no-store",headers:{Accept:"application/vnd.github+json"}});
     if(!response.ok) throw new Error(`GitHub commit information failed (${response.status})`);
     const commits=await response.json();
     const value=commits?.[0]?.commit?.committer?.date||commits?.[0]?.commit?.author?.date;
@@ -2506,15 +2528,29 @@ async function fetchSharedDiagramUpdatedAt(){
     return updatedAt;
 }
 
-async function refreshGitHubLastUpdated(){
+async function refreshGitHubLastUpdated(path=sharedDiagramPath){
     const output=document.getElementById("githubLastUpdated");
     output.textContent="Retrieving from GitHub...";
-    try{output.textContent=formatGitHubDate(await fetchSharedDiagramUpdatedAt());}
+    try{output.textContent=formatGitHubDate(await fetchSharedDiagramUpdatedAt(path));}
     catch(error){console.warn(error);sharedDiagramUpdatedAt=null;output.textContent="Unable to retrieve";}
 }
 
-async function updateLayoutFromGitHub(){
-    const rawUrl=getSharedDiagramUrl();
+async function populateSharedDiagramFiles(){
+    const select=document.getElementById("githubDiagramFile"),status=document.getElementById("githubDiagramFileStatus"),pathOutput=document.getElementById("githubDiagramPath"),confirm=document.getElementById("btnConfirmGitHubUpdate");
+    select.disabled=true;confirm.disabled=true;status.textContent="Reading the data folder from GitHub…";
+    try{
+        const files=await fetchSharedDiagramFiles();select.innerHTML="";
+        files.forEach(file=>{const option=document.createElement("option");option.value=file.path;option.textContent=file.name;select.appendChild(option);});
+        const preferred=files.some(file=>file.path===sharedDiagramPath)?sharedDiagramPath:(files.some(file=>file.path===DEFAULT_SHARED_DIAGRAM_PATH)?DEFAULT_SHARED_DIAGRAM_PATH:files[0].path);
+        sharedDiagramPath=preferred;select.value=preferred;pathOutput.textContent=`${SHARED_DIAGRAM_BRANCH}/${preferred}`;status.textContent=`${files.length} JSON file${files.length===1?"":"s"} available.`;select.disabled=false;confirm.disabled=false;
+        await refreshGitHubLastUpdated(preferred);
+    }catch(error){
+        console.warn(error);sharedDiagramPath=DEFAULT_SHARED_DIAGRAM_PATH;select.innerHTML="";const option=document.createElement("option");option.value=sharedDiagramPath;option.textContent=sharedDiagramPath.split("/").pop();select.appendChild(option);pathOutput.textContent=`${SHARED_DIAGRAM_BRANCH}/${sharedDiagramPath}`;status.textContent="File list unavailable; using the default JSON.";select.disabled=false;confirm.disabled=false;await refreshGitHubLastUpdated(sharedDiagramPath);
+    }
+}
+
+async function updateLayoutFromGitHub(path=sharedDiagramPath){
+    const rawUrl=getSharedDiagramUrl(path);
     const response=await fetch(rawUrl,{cache:"no-store"});
     if(!response.ok) throw new Error(`Failed to download master JSON (${response.status})`);
     loadLayout(await response.text());
@@ -3209,9 +3245,12 @@ btnCheckStatus.onclick=function(){
 };
 btnOpenMain.onclick=function(){
     githubUpdateModal.style.display="flex";
-    refreshGitHubLastUpdated();
-    document.getElementById("btnConfirmGitHubUpdate").focus();
+    void populateSharedDiagramFiles();
+    document.getElementById("githubDiagramFile").focus();
 };
+document.getElementById("githubDiagramFile").addEventListener("change",function(){
+    sharedDiagramPath=normalizeSharedDiagramPath(this.value);sharedDiagramUpdatedAt=null;document.getElementById("githubDiagramPath").textContent=`${SHARED_DIAGRAM_BRANCH}/${sharedDiagramPath}`;void refreshGitHubLastUpdated(sharedDiagramPath);
+});
 document.getElementById("btnCloseGitHubUpdate").onclick=function(){
     githubUpdateModal.style.display="none";
     btnOpenMain.focus();
@@ -3224,8 +3263,8 @@ document.getElementById("btnConfirmGitHubUpdate").onclick=async function(){
     btnOpenMain.disabled=true;
     showFeedback("Updating diagram...",false);
     try{
-        await updateLayoutFromGitHub();
-        if(!sharedDiagramUpdatedAt){try{await fetchSharedDiagramUpdatedAt();}catch(error){console.warn(error);}}
+        await updateLayoutFromGitHub(sharedDiagramPath);
+        if(!sharedDiagramUpdatedAt){try{await fetchSharedDiagramUpdatedAt(sharedDiagramPath);}catch(error){console.warn(error);}}
         githubUpdateModal.style.display="none";
         showFeedback(`Diagram berhasil diperbarui dari GitHub. Last uploaded/updated: ${sharedDiagramUpdatedAt?formatGitHubDate(sharedDiagramUpdatedAt):"Unable to retrieve"}`,false);
     }catch(error){
