@@ -8,7 +8,7 @@
 
 <title>Hotel Network Diagram</title>
 
-<link rel="stylesheet" href="style.css?v=20260904-7">
+<link rel="stylesheet" href="style.css?v=20260905-1">
 
 </head>
 <body>
@@ -48,7 +48,7 @@
 
         <button id="btnModeToggle" class="modeToggle" type="button" aria-pressed="false">🔒 Read Mode</button>
         <button id="btnNewDiagram" type="button">＋ New</button>
-        <button id="btnSharePublish" type="button">↗ Share / Publish</button>
+        <button id="btnSharePublish" type="button">↗ Publish</button>
         <button id="btnSyncMerge" type="button">⇄ Sync / Merge</button>
 
         <button id="btnOpen">📂 Import / Load JSON</button>
@@ -493,15 +493,13 @@
 
 <div id="sharePublishModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="sharePublishTitle">
     <div class="modalContent collaborationContent">
-        <h2 id="sharePublishTitle">Share / Publish</h2>
-        <p>Publish perubahan diagram agar user tertentu dapat meninjaunya dan memilih perubahan untuk di-merge. Diagram pribadi Anda tetap tidak dapat diedit oleh user lain.</p>
-        <label for="shareRecipients">Email Google atau Firebase UID penerima</label>
-        <textarea id="shareRecipients" rows="4" placeholder="user@example.com&#10;atau Firebase UID"></textarea>
-        <small>Pisahkan beberapa penerima dengan baris baru atau koma. UID tetap menjadi identifier internal.</small>
+        <h2 id="sharePublishTitle">Publish Diagram</h2>
+        <p>Publikasikan diagram sebagai sumber sinkronisasi untuk semua pengguna yang sudah login. Pengguna lain hanya dapat menyalin atau merge ke diagram mereka sendiri—diagram asli Anda tetap hanya dapat diubah oleh Anda.</p>
         <div id="sharePublishStatus" class="syncStatusCard" role="status" aria-live="polite">Belum dipublish.</div>
         <div class="modalActions">
             <button id="btnCloseSharePublish" type="button">Cancel</button>
-            <button id="btnConfirmSharePublish" type="button">Share / Publish</button>
+            <button id="btnUnpublish" type="button" hidden>Unpublish</button>
+            <button id="btnConfirmSharePublish" type="button">Publish</button>
         </div>
     </div>
 </div>
@@ -509,18 +507,22 @@
 <div id="syncMergeModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="syncMergeTitle">
     <div class="modalContent collaborationContent syncMergeContent">
         <h2 id="syncMergeTitle">Sync / Merge Changes</h2>
-        <label for="syncSourceSelect">Published diagram</label>
-        <select id="syncSourceSelect"><option>Loading shared diagrams…</option></select>
+        <label for="syncSourceSearch">Published Sync List</label>
+        <input id="syncSourceSearch" type="search" placeholder="Search user or diagram name…">
+        <input id="syncSourceSelect" type="hidden">
+        <div id="publishedDiagramList" class="publishedDiagramList"><p class="syncEmpty">Loading published diagrams…</p></div>
         <div id="syncVersionStatus" class="syncStatusCard" role="status" aria-live="polite">Choose a published diagram.</div>
         <div class="syncToolbar">
-            <button id="btnRefreshSync" type="button">Refresh Changes</button>
+            <button id="btnRefreshSync" type="button">Refresh List</button>
             <label><input id="syncSelectAll" type="checkbox" checked> Select all non-conflicts</label>
         </div>
-        <div id="syncChangesList" class="syncChangesList"><p class="syncEmpty">No changes loaded.</p></div>
+        <div id="syncChangesList" class="syncChangesList"><p class="syncEmpty">Select a source, then Review Changes.</p></div>
         <div class="modalActions syncActions">
             <button id="btnCloseSyncMerge" type="button">Cancel</button>
-            <button id="btnSyncSelected" type="button">Sync Selected</button>
-            <button id="btnSyncAll" type="button">Sync All</button>
+            <button id="btnSmartMerge" type="button">Smart Merge</button>
+            <button id="btnReviewChanges" type="button">Review Changes</button>
+            <button id="btnSyncSelected" type="button" hidden>Apply Reviewed</button>
+            <button id="btnReplaceDiagram" class="dangerButton" type="button">Replace Entire Diagram</button>
         </div>
     </div>
 </div>
@@ -608,8 +610,9 @@
 
 </div>
 
-<script src="app.js?v=20260904-7"></script>
-<script type="module" src="firebase.js?v=20260904-7"></script>
+<script src="sync-engine.js?v=20260905-1"></script>
+<script src="app.js?v=20260905-1"></script>
+<script type="module" src="firebase.js?v=20260905-1"></script>
 </body>
 
 </html>
