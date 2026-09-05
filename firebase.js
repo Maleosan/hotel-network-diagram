@@ -48,6 +48,7 @@ const PUBLICATION_COLLECTION="publishedDiagrams";
 const CHANGE_EVENT="hotel-network-diagram-change";
 const bridge=window.hotelNetworkDiagramCloudBridge;
 const syncEngine=window.HotelSyncEngine;
+const syncProgressApi=window.HotelSyncProgress;
 
 const authGate=document.getElementById("authGate");
 const authMessage=document.getElementById("authMessage");
@@ -71,6 +72,12 @@ const syncSourceSearch=document.getElementById("syncSourceSearch");
 const publishedDiagramList=document.getElementById("publishedDiagramList");
 const syncVersionStatus=document.getElementById("syncVersionStatus");
 const syncChangesList=document.getElementById("syncChangesList");
+const syncProgress=new syncProgressApi.ProgressController({
+    modal:document.getElementById("syncProgressModal"),title:document.getElementById("syncProgressTitle"),status:document.getElementById("syncProgressStatus"),percent:document.getElementById("syncProgressPercent"),track:document.getElementById("syncProgressTrack"),bar:document.getElementById("syncProgressBar"),detail:document.getElementById("syncProgressDetail"),steps:document.getElementById("syncProgressSteps"),summary:document.getElementById("syncProgressSummary"),cancel:document.getElementById("btnCancelSyncProgress"),retry:document.getElementById("btnRetrySyncProgress"),close:document.getElementById("btnCloseSyncProgress")
+},busy=>{
+    document.body.classList.toggle("syncOperationBusy",busy);
+    [document.getElementById("toolbar"),document.getElementById("workspace"),syncModal].forEach(element=>{if(element)element.inert=busy;});
+});
 
 let auth=null;
 let db=null;
@@ -93,6 +100,7 @@ let saveRunning=false;
 let saveQueued=false;
 let lastSaveError=null;
 let authGeneration=0;
+let syncOperationRunning=false;
 
 function setSaveStatus(message,state=""){
     saveStatus.textContent=message;
@@ -116,6 +124,19 @@ function getCloudErrorMessage(error){
     if(error?.code==="unavailable")return "Firestore tidak tersedia. Periksa koneksi internet.";
     if(error?.code==="resource-exhausted")return "Kuota Firestore sementara telah tercapai.";
     return error?.message||"Firestore gagal memproses data.";
+}
+
+async function runSyncOperation(options){
+    if(syncOperationRunning){bridge.showFeedback("Proses Sync lain masih berjalan.",true);return;}
+    const retry=()=>runSyncOperation(options);
+    syncOperationRunning=true;syncProgress.start({title:options.title,stages:options.stages,retry});
+    try{
+        const result=await options.task(syncProgress);
+        syncProgress.complete({title:options.completedTitle||"✓ SYNC COMPLETED",summary:result?.summary||[]});
+    }catch(error){
+        if(error instanceof syncProgressApi.SyncCancelledError)syncProgress.cancelled();
+        else{console.error(`${options.title} failed`,error);syncProgress.fail(new Error(getCloudErrorMessage(error)),{retry});bridge.showFeedback(getCloudErrorMessage(error),true);}
+    }finally{syncOperationRunning=false;}
 }
 
 function setUserDisplay(user){
@@ -400,7 +421,7 @@ function scheduleCloudSave(){
     saveTimer=setTimeout(()=>{void saveNow();},AUTO_SAVE_DELAY);
 }
 
-async function saveNow({manual=false}={}){
+async function saveNow({manual=false,diagramDataOverride=null}={}){
     if(!currentUser||!diagramReady){if(manual)setSaveStatus("Cloud belum siap","error");return;}
     if(navigator.onLine===false){lastSaveError=new Error("Tidak ada koneksi internet.");setSaveStatus("⚠ Save failed","error");bridge.showFeedback("Tidak ada koneksi internet. Diagram tetap tersimpan di browser dan akan dicoba lagi saat online.",true);return;}
     clearTimeout(saveTimer);saveTimer=null;
@@ -416,7 +437,7 @@ async function saveNow({manual=false}={}){
     const writtenPhotoIds=[];
     const writtenChangeIds=[];
     try{
-        const diagramData=bridge.getDiagramData();
+        const diagramData=diagramDataOverride||bridge.getDiagramData();
         const {cloudData,photos}=prepareCloudDiagram(diagramData);
         const changes=buildChangeRecords(knownVersion===0?null:lastSavedCloudData,cloudData,previousVersion,newVersion,savingUser.uid);
         if(!changes.length)newVersion=knownVersion;
@@ -544,23 +565,24 @@ function createSyncChangeRow(item){
     return row;
 }
 
-async function readChunkedLayout(getReference,revision,count,checksum){
+async function readChunkedLayout(getReference,revision,count,checksum,onChunk=null){
     if(!revision||!Number.isInteger(count)||count<1||count>MAX_CHUNK_COUNT)throw new Error("Snapshot sumber tidak valid. Pemilik perlu Publish ulang.");
-    const snapshots=await Promise.all(Array.from({length:count},(_,index)=>getDoc(getReference(revision,index))));
+    let completed=0;
+    const snapshots=await Promise.all(Array.from({length:count},async(_,index)=>{const snapshot=await getDoc(getReference(revision,index));completed++;onChunk?.(completed,count);return snapshot;}));
     if(snapshots.some(item=>!item.exists()))throw new Error("Snapshot sumber belum lengkap. Pemilik perlu Publish ulang.");
     const serialized=snapshots.map(item=>String(item.data()?.data||"")).join("");
     if(checksum&&hashString(serialized)!==checksum)throw new Error("Checksum snapshot sumber tidak cocok.");
     return JSON.parse(serialized);
 }
 
-async function loadPublishedLayout(publication){
-    return readChunkedLayout((revision,index)=>getPublishedChunkRef(publication.id,revision,index),publication.sourceRevision,Number(publication.sourceChunkCount),publication.sourceChecksum);
+async function loadPublishedLayout(publication,onChunk=null){
+    return readChunkedLayout((revision,index)=>getPublishedChunkRef(publication.id,revision,index),publication.sourceRevision,Number(publication.sourceChunkCount),publication.sourceChecksum,onChunk);
 }
 
-async function loadSyncBase(publicationId){
+async function loadSyncBase(publicationId,onChunk=null){
     const snapshot=await getDoc(getSyncBaseRef(currentUser.uid,publicationId));if(!snapshot.exists())return null;
     const data=snapshot.data()||{};
-    const layout=await readChunkedLayout((revision,index)=>getSyncBaseChunkRef(currentUser.uid,publicationId,revision,index),data.revision,Number(data.chunkCount),data.checksum);
+    const layout=await readChunkedLayout((revision,index)=>getSyncBaseChunkRef(currentUser.uid,publicationId,revision,index),data.revision,Number(data.chunkCount),data.checksum,onChunk);
     return{layout,version:Number(data.version)||0,revision:data.revision,chunkCount:Number(data.chunkCount)||0};
 }
 
@@ -578,15 +600,25 @@ async function getPublishedChanges(publicationId,fromVersion,toVersion){
     return snapshot.docs.map(item=>({id:item.id,...item.data()})).sort((a,b)=>a.newVersion-b.newVersion||String(a.changeId).localeCompare(String(b.changeId)));
 }
 
-async function reviewSelectedPublication(){
+async function reviewSelectedPublication({progress=null,offset=0}={}){
     const publicationId=syncSourceSelect.value;if(!publicationId)return;
+    progress?.indeterminate(offset,"Connecting to Firebase…");progress?.throwIfCancelled();
     const publicationSnapshot=await getDoc(getPublicationRef(publicationId));if(!publicationSnapshot.exists())throw new Error("Published diagram tidak ditemukan.");
     const publication={id:publicationId,...publicationSnapshot.data()};if(!publication.published)throw new Error("Diagram ini sudah di-unpublish oleh pemiliknya.");
+    progress?.stage(offset,{done:1,total:1,status:"Connected to Firebase",detail:publication.displayName||"Published user"});progress?.throwIfCancelled();
+    progress?.indeterminate(offset+1,"Loading sync state…");
     const state=await loadSyncState(publicationId),cursor=Math.max(0,Number(state.lastSyncedVersion)||0),latestVersion=Math.max(cursor,Number(publication.publishedVersion)||0),resolved=new Set(Array.isArray(state.resolvedChangeIds)?state.resolvedChangeIds:[]);
-    const base=await loadSyncBase(publicationId),trustedBase=Boolean(base&&base.version===cursor&&cursor>0),incremental=trustedBase?await getPublishedChanges(publicationId,cursor,latestVersion):[];
-    const sourceLayout=trustedBase?syncEngine.reconstructSource(base.layout,incremental):await loadPublishedLayout(publication);
+    const base=await loadSyncBase(publicationId,(done,total)=>progress?.stage(offset+1,{done,total,status:"Loading common base…",detail:`${done} / ${total} chunks`})),trustedBase=Boolean(base&&base.version===cursor&&cursor>0);
+    progress?.stage(offset+1,{done:1,total:1,status:trustedBase?"Common base verified":"No common base found",detail:`Your cursor v${cursor}`});progress?.throwIfCancelled();
+    progress?.indeterminate(offset+2,trustedBase?"Loading incremental changes…":"Loading published snapshot…");
+    const incremental=trustedBase?await getPublishedChanges(publicationId,cursor,latestVersion):[];
+    const sourceLayout=trustedBase?syncEngine.reconstructSource(base.layout,incremental):await loadPublishedLayout(publication,(done,total)=>{progress?.stage(offset+2,{done,total,status:"Loading published snapshot…",detail:`${done} / ${total} chunks`});progress?.throwIfCancelled();});
+    progress?.stage(offset+2,{done:trustedBase?incremental.length||1:1,total:trustedBase?incremental.length||1:1,status:trustedBase?"Incremental changes loaded":"Published snapshot loaded",detail:trustedBase?`${incremental.length} source changes`:"Snapshot checksum verified"});progress?.throwIfCancelled();
+    progress?.indeterminate(offset+3,"Comparing BASE, SOURCE, and CURRENT…");
     const currentCloud=prepareCloudDiagram(bridge.getDiagramData()).cloudData,similarity=syncEngine.similarity(currentCloud,sourceLayout);
     const plan=syncEngine.planThreeWay(trustedBase?base.layout:null,currentCloud,sourceLayout,{trustedBase}).map(item=>({...item,changeId:`v${latestVersion}-${item.targetType}-${item.targetId}-${item.field}`}));
+    progress?.stage(offset+3,{done:plan.length||1,total:plan.length||1,status:"Versions compared",detail:`${plan.length} field-level results`});progress?.throwIfCancelled();
+    progress?.indeterminate(offset+4,"Preparing change review…");
     plan.filter(item=>item.alreadyApplied).forEach(item=>resolved.add(item.changeId));
     loadedSyncChanges=plan.filter(item=>!item.alreadyApplied&&!resolved.has(item.changeId));
     loadedSyncState={...state,lastSyncedVersion:cursor,resolvedChangeIds:[...resolved],publication,sourceLayout,allPlan:plan,similarity,trustedBase};syncChangesList.innerHTML="";
@@ -595,16 +627,20 @@ async function reviewSelectedPublication(){
     const baseMessage=trustedBase?"Common base verified":"No common base — review carefully or replace";
     syncVersionStatus.innerHTML=`${baseMessage} · Your cursor v${cursor} · Source v${latestVersion} · ${loadedSyncChanges.length} change(s) · Similarity <span class="similarityBadge ${similarity.level}">${similarity.score}% ${similarity.label}</span>`;
     document.getElementById("btnSyncSelected").hidden=false;
+    progress?.stage(offset+4,{done:loadedSyncChanges.length||1,total:loadedSyncChanges.length||1,status:"Review ready",detail:`${loadedSyncChanges.length} changes · ${loadedSyncChanges.filter(item=>item.conflict).length} conflicts`});
+    return{summary:[`${loadedSyncChanges.length} changes ready for review`,`${loadedSyncChanges.filter(item=>item.conflict).length} conflicts require a choice`,`Similarity ${similarity.score}% · ${similarity.label}`]};
 }
 
-async function hydrateMergedPhotos(layout,publicationId,photoIds){
+async function hydrateMergedPhotos(layout,publicationId,photoIds,onProgress=null){
+    let completed=0;
     for(const photoId of photoIds){
         const node=layout.nodes.find(item=>item.pictureId===photoId);if(!node)continue;
-        const cached=parseImageDataUrl(node.pictureData);if(cached&&hashString(cached.base64)===node.pictureHash)continue;
+        const cached=parseImageDataUrl(node.pictureData);if(cached&&hashString(cached.base64)===node.pictureHash){completed++;onProgress?.(completed,photoIds.size);continue;}
         const snapshot=await getDoc(getPublishedPhotoRef(publicationId,photoId));if(!snapshot.exists())throw new Error(`Published photo ${photoId} tidak ditemukan.`);
         const photo=snapshot.data()||{},verified=readVerifiedPhotoSnapshot(snapshot,node.pictureHash);
         if(!verified)throw new Error(`Published photo ${photoId} tidak valid.`);
         node.pictureData=`data:${verified.mimeType};base64,${verified.base64}`;
+        completed++;onProgress?.(completed,photoIds.size);
     }
 }
 
@@ -617,38 +653,65 @@ function validateMergedLayout(layout){
     }
 }
 
-async function syncReviewedChanges({smart=false}={}){
+async function syncReviewedChanges({smart=false,progress=null,offset=0}={}){
     if(!loadedSyncState?.publication)throw new Error("Pilih dan review published diagram terlebih dahulu.");
+    if(!loadedSyncChanges.length)return{summary:["Diagram is already up to date","0 changes applied"]};
+    progress?.stage(offset,{done:1,total:1,status:"Temporary merge state ready",detail:"Current diagram remains unchanged"});progress?.throwIfCancelled();
     const layout=cloneValue(bridge.getDiagramData()),resolved=new Set(Array.isArray(loadedSyncState.resolvedChangeIds)?loadedSyncState.resolvedChangeIds:[]),photoIds=new Set();
-    let selectedCount=0;
+    let selectedCount=0,appliedCount=0,preservedCount=0,conflictsResolved=0,deletedDevices=0,deferredCount=0,processed=0;
     for(const change of loadedSyncChanges){
         const row=syncChangesList.querySelector(`[data-change-id="${CSS.escape(change.changeId)}"]`),checkbox=row?.querySelector(".syncApply"),resolution=row?.querySelector(".syncResolution")?.value;
         let action=smart?(change.conflict?"defer":"source"):(change.conflict?resolution:(checkbox?.checked?"source":"defer"));
-        if(action==="defer"||!action)continue;
+        processed++;
+        if(action==="defer"||!action){deferredCount++;progress?.stage(offset+1,{done:processed,total:loadedSyncChanges.length,status:"Applying selected changes…",detail:`${processed} / ${loadedSyncChanges.length} checked`});continue;}
         selectedCount++;
-        if(action==="source"&&!syncEngine.applyChange(layout,change))throw new Error(`Target ${change.targetLabel} belum ada. Pilih juga perubahan create yang terkait.`);
-        if(action==="source"&&change.after?.pictureId)photoIds.add(change.after.pictureId);
+        if(action==="source"){
+            if(!syncEngine.applyChange(layout,change))throw new Error(`Target ${change.targetLabel} belum ada. Pilih juga perubahan create yang terkait.`);
+            appliedCount++;if(change.after?.pictureId)photoIds.add(change.after.pictureId);if(change.targetType==="device"&&change.operation==="delete")deletedDevices++;
+        }else if(action==="mine")preservedCount++;
+        if(change.conflict)conflictsResolved++;
         resolved.add(change.changeId);
+        progress?.stage(offset+1,{done:processed,total:loadedSyncChanges.length,status:"Applying selected changes…",detail:`${processed} / ${loadedSyncChanges.length} checked`});progress?.throwIfCancelled();
     }
     if(!selectedCount){if(smart&&loadedSyncChanges.some(item=>item.conflict))throw new Error("Semua perubahan yang tersisa adalah conflict. Gunakan Review Changes.");throw new Error("Tidak ada perubahan yang dipilih.");}
+    progress?.indeterminate(offset+2,"Validating devices, connections, and ports…");progress?.throwIfCancelled();
     validateMergedLayout(layout);
-    await hydrateMergedPhotos(layout,loadedSyncState.publication.id,photoIds);
-    bridge.loadDiagramData(layout,{checkpoint:true});await saveNow({manual:true});await waitForSaveIdle();if(lastSaveError)throw lastSaveError;
+    progress?.stage(offset+2,{done:1,total:1,status:"Validation passed",detail:`${layout.nodes.length} devices · ${layout.links.length} connections`});progress?.throwIfCancelled();
+    if(photoIds.size){await hydrateMergedPhotos(layout,loadedSyncState.publication.id,photoIds,(done,total)=>{progress?.stage(offset+3,{done,total,status:"Processing changed images…",detail:`${done} / ${total} images`});progress?.throwIfCancelled();});}
+    else progress?.stage(offset+3,{done:1,total:1,status:"No changed images to download",detail:"0 images"});
+    progress?.throwIfCancelled();progress?.stage(offset+4,{done:0,total:1,status:"Saving complete result to Firestore…",detail:"Cancel is disabled during this safe commit",cancellable:false});progress?.setUnsafe("Saving complete result to Firestore…");
+    await waitForSaveIdle();await saveNow({manual:true,diagramDataOverride:layout});await waitForSaveIdle();if(lastSaveError)throw lastSaveError;
+    bridge.loadDiagramData(layout,{checkpoint:true});
+    progress?.stage(offset+4,{done:1,total:1,status:"Diagram saved and committed",detail:"Undo checkpoint created",cancellable:false});
     const allResolved=loadedSyncState.allPlan.every(item=>item.alreadyApplied||resolved.has(item.changeId)),cursor=allResolved?Number(loadedSyncState.publication.publishedVersion)||0:Number(loadedSyncState.lastSyncedVersion)||0,remaining=allResolved?[]:[...resolved].slice(-500);
+    progress?.indeterminate(offset+5,"Updating per-source sync cursor…");
     if(allResolved)await saveSyncBase(loadedSyncState.publication.id,loadedSyncState.sourceLayout,cursor);
     await setDoc(getSyncStateRef(currentUser.uid,loadedSyncState.publication.id),{sourceOwnerUid:loadedSyncState.publication.ownerUid,sourceName:loadedSyncState.publication.displayName||"Published user",lastSyncedFromUser:loadedSyncState.publication.ownerUid,lastSyncedDiagram:loadedSyncState.publication.diagramId||DIAGRAM_ID,lastSyncedVersion:cursor,lastSourceVersion:loadedSyncState.publication.publishedVersion||cursor,resolvedChangeIds:remaining,lastSyncTime:serverTimestamp()},{merge:true});
-    bridge.showFeedback(`Sync selesai. Cursor sekarang v${cursor}.`,false);await reviewSelectedPublication();
+    progress?.stage(offset+5,{done:1,total:1,status:"Sync cursor saved",detail:`Cursor v${cursor}`,cancellable:false});
+    syncVersionStatus.textContent=`Sync completed · cursor v${cursor}${deferredCount?` · ${deferredCount} changes still need review`:""}`;syncChangesList.innerHTML='<p class="syncEmpty">Sync completed. Choose Review Changes to refresh the comparison.</p>';
+    bridge.showFeedback(`Sync selesai. Cursor sekarang v${cursor}.`,false);
+    return{summary:[`${appliedCount} changes applied`,`${preservedCount} changes preserved`,`${conflictsResolved} conflicts resolved`,`${deletedDevices} devices deleted`,`${deferredCount} changes deferred`]};
 }
 
-async function replaceWithPublishedDiagram(){
+async function replaceWithPublishedDiagram({progress=null}={}){
     if(!syncSourceSelect.value)throw new Error("Pilih published diagram terlebih dahulu.");
+    progress?.indeterminate(0,"Connecting to Firebase…");progress?.throwIfCancelled();
     const snapshot=await getDoc(getPublicationRef(syncSourceSelect.value));if(!snapshot.exists()||!snapshot.data()?.published)throw new Error("Published diagram tidak tersedia.");
-    const publication={id:snapshot.id,...snapshot.data()},sourceLayout=await loadPublishedLayout(publication),photoIds=new Set((sourceLayout.nodes||[]).map(node=>node.pictureId).filter(Boolean));
-    await hydrateMergedPhotos(sourceLayout,publication.id,photoIds);validateMergedLayout(sourceLayout);
-    bridge.loadDiagramData(sourceLayout,{checkpoint:true});await saveNow({manual:true});await waitForSaveIdle();if(lastSaveError)throw lastSaveError;
+    const publication={id:snapshot.id,...snapshot.data()};progress?.stage(0,{done:1,total:1,status:"Connected to Firebase",detail:publication.displayName||"Published user"});progress?.throwIfCancelled();
+    progress?.indeterminate(1,"Loading complete published snapshot…");
+    const sourceLayout=await loadPublishedLayout(publication,(done,total)=>{progress?.stage(1,{done,total,status:"Loading complete published snapshot…",detail:`${done} / ${total} chunks`});progress?.throwIfCancelled();}),photoIds=new Set((sourceLayout.nodes||[]).map(node=>node.pictureId).filter(Boolean));
+    progress?.indeterminate(2,"Validating replacement diagram…");validateMergedLayout(sourceLayout);progress?.stage(2,{done:1,total:1,status:"Replacement diagram valid",detail:`${sourceLayout.nodes.length} devices · ${sourceLayout.links.length} connections`});progress?.throwIfCancelled();
+    if(photoIds.size)await hydrateMergedPhotos(sourceLayout,publication.id,photoIds,(done,total)=>{progress?.stage(3,{done,total,status:"Processing source images…",detail:`${done} / ${total} images`});progress?.throwIfCancelled();});
+    else progress?.stage(3,{done:1,total:1,status:"No source images to download",detail:"0 images"});
+    progress?.throwIfCancelled();progress?.stage(4,{done:0,total:1,status:"Saving complete replacement…",detail:"Cancel is disabled during this safe commit",cancellable:false});progress?.setUnsafe("Saving complete replacement to Firestore…");
+    await waitForSaveIdle();await saveNow({manual:true,diagramDataOverride:sourceLayout});await waitForSaveIdle();if(lastSaveError)throw lastSaveError;
+    bridge.loadDiagramData(sourceLayout,{checkpoint:true});progress?.stage(4,{done:1,total:1,status:"Replacement saved and committed",detail:"Undo checkpoint created",cancellable:false});
+    progress?.indeterminate(5,"Updating sync source state…");
     await saveSyncBase(publication.id,prepareCloudDiagram(sourceLayout).cloudData,Number(publication.publishedVersion)||0);
     await setDoc(getSyncStateRef(currentUser.uid,publication.id),{sourceOwnerUid:publication.ownerUid,sourceName:publication.displayName||"Published user",lastSyncedFromUser:publication.ownerUid,lastSyncedDiagram:publication.diagramId||DIAGRAM_ID,lastSyncedVersion:Number(publication.publishedVersion)||0,lastSourceVersion:Number(publication.publishedVersion)||0,resolvedChangeIds:[],lastSyncTime:serverTimestamp()},{merge:true});
+    progress?.stage(5,{done:1,total:1,status:"Replacement sync state saved",detail:`Source v${publication.publishedVersion||0}`,cancellable:false});
     bridge.showFeedback("Diagram diganti seluruhnya. Undo tersedia bila ingin mengembalikan keadaan sebelumnya.",false);syncModal.style.display="none";
+    return{summary:[`${sourceLayout.nodes.length} devices loaded`,`${sourceLayout.links.length} connections loaded`,`${photoIds.size} device images processed`,`Source version ${publication.publishedVersion||0} saved`,`Undo checkpoint available`]};
 }
 
 async function openShareModal(){
@@ -708,14 +771,16 @@ document.getElementById("btnUnpublish").addEventListener("click",async event=>{i
 syncSourceSearch.addEventListener("input",renderPublishedDiagramList);
 document.getElementById("btnRefreshSync").addEventListener("click",()=>{void openSyncModal().catch(error=>bridge.showFeedback(getCloudErrorMessage(error),true));});
 document.getElementById("syncSelectAll").addEventListener("change",event=>{syncChangesList.querySelectorAll(".syncApply").forEach(input=>{if(!input.closest(".conflict"))input.checked=event.currentTarget.checked;});});
-document.getElementById("btnSyncSelected").addEventListener("click",async event=>{const button=event.currentTarget;button.disabled=true;try{await syncReviewedChanges();}catch(error){bridge.showFeedback(getCloudErrorMessage(error),true);}finally{button.disabled=false;}});
-document.getElementById("btnReviewChanges").addEventListener("click",async event=>{const button=event.currentTarget;if(!syncSourceSelect.value){bridge.showFeedback("Pilih published diagram terlebih dahulu.",true);return;}button.disabled=true;try{await reviewSelectedPublication();}catch(error){bridge.showFeedback(getCloudErrorMessage(error),true);}finally{button.disabled=false;}});
-document.getElementById("btnSmartMerge").addEventListener("click",async event=>{const button=event.currentTarget;if(!syncSourceSelect.value){bridge.showFeedback("Pilih published diagram terlebih dahulu.",true);return;}button.disabled=true;try{await reviewSelectedPublication();await syncReviewedChanges({smart:true});}catch(error){bridge.showFeedback(getCloudErrorMessage(error),true);}finally{button.disabled=false;}});
-document.getElementById("btnReplaceDiagram").addEventListener("click",async event=>{if(!syncSourceSelect.value){bridge.showFeedback("Pilih published diagram terlebih dahulu.",true);return;}if(!confirm("Replace Entire Diagram akan mengganti semua device, connection, annotation, dan settings saat ini. Lanjutkan?"))return;const button=event.currentTarget;button.disabled=true;try{await replaceWithPublishedDiagram();}catch(error){bridge.showFeedback(getCloudErrorMessage(error),true);}finally{button.disabled=false;}});
+const REVIEW_PROGRESS_STAGES=["Connecting to Firebase","Loading sync state","Loading source changes","Comparing versions","Preparing review"];
+const MERGE_PROGRESS_STAGES=["Preparing temporary merge","Applying selected changes","Validating devices and connections","Processing changed images","Saving complete result","Updating sync cursor"];
+document.getElementById("btnSyncSelected").addEventListener("click",()=>{void runSyncOperation({title:`SYNCING ${loadedSyncState?.publication?.displayName||"SOURCE"}`,stages:MERGE_PROGRESS_STAGES,task:progress=>syncReviewedChanges({progress})});});
+document.getElementById("btnReviewChanges").addEventListener("click",()=>{if(!syncSourceSelect.value){bridge.showFeedback("Pilih published diagram terlebih dahulu.",true);return;}void runSyncOperation({title:"REVIEWING SOURCE CHANGES",completedTitle:"✓ REVIEW READY",stages:REVIEW_PROGRESS_STAGES,task:progress=>reviewSelectedPublication({progress})});});
+document.getElementById("btnSmartMerge").addEventListener("click",()=>{if(!syncSourceSelect.value){bridge.showFeedback("Pilih published diagram terlebih dahulu.",true);return;}void runSyncOperation({title:"SMART MERGE",stages:[...REVIEW_PROGRESS_STAGES,...MERGE_PROGRESS_STAGES],task:async progress=>{await reviewSelectedPublication({progress,offset:0});return syncReviewedChanges({smart:true,progress,offset:REVIEW_PROGRESS_STAGES.length});}});});
+document.getElementById("btnReplaceDiagram").addEventListener("click",()=>{if(!syncSourceSelect.value){bridge.showFeedback("Pilih published diagram terlebih dahulu.",true);return;}if(!confirm("Replace Entire Diagram akan mengganti semua device, connection, annotation, dan settings saat ini. Lanjutkan?"))return;void runSyncOperation({title:"REPLACING ENTIRE DIAGRAM",stages:["Connecting to Firebase","Loading source snapshot","Validating replacement","Processing source images","Saving complete replacement","Updating sync state"],task:progress=>replaceWithPublishedDiagram({progress})});});
 document.addEventListener("keydown",event=>{if(event.key!=="Escape")return;if(shareModal.style.display==="flex"){shareModal.style.display="none";shareButton.focus();}if(syncModal.style.display==="flex"){syncModal.style.display="none";syncButton.focus();}});
 
 async function initializeFirebase(){
-    if(!bridge||!syncEngine)throw new Error("Diagram cloud/sync engine tidak tersedia.");
+    if(!bridge||!syncEngine||!syncProgressApi)throw new Error("Diagram cloud/sync engine tidak tersedia.");
     const firebaseApp=initializeApp(firebaseConfig);
     auth=getAuth(firebaseApp);db=getFirestore(firebaseApp);provider=new GoogleAuthProvider();auth.useDeviceLanguage();
     try{await setPersistence(auth,browserLocalPersistence);}catch(error){console.warn("Firebase Auth persistence unavailable",error);}
