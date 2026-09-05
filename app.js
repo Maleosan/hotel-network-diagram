@@ -3165,8 +3165,16 @@ window.hotelNetworkDiagramCloudBridge=Object.freeze({
             return saved;
         }catch(error){console.warn("Unable to read the legacy cache",error);return null;}
     },
-    loadDiagramData:data=>{
-        loadLayout(data);render();updateView();saveToLocalStorage({notifyCloud:false});
+    loadDiagramData:(data,options={})=>{
+        const checkpoint=options.checkpoint?cloneDiagramState():null;
+        loadLayout(data);
+        if(checkpoint){
+            undoHistory.push(checkpoint);
+            if(undoHistory.length>HISTORY_LIMIT)undoHistory.shift();
+            redoHistory.splice(0,redoHistory.length);
+            updateHistoryButtons();
+        }
+        render();updateView();saveToLocalStorage({notifyCloud:false});
     },
     loadDefaultDiagram:()=>{
         loadLayout({nodes:DEFAULT_NODES,links:DEFAULT_LINKS,annotations:[],statusSummaryTypes:[],zoom:1,viewX:0,viewY:0,diagramName:"HOTEL NETWORK DIAGRAM",theme:"dark",gridEnabled:true,snapEnabled:true,background:{type:"theme",color:"#202020",data:"",fit:"cover",customized:false},globalDeviceScale:1,defaultDeviceNameColor:null,globalStatusTextSize:10});
