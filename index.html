@@ -8,7 +8,7 @@
 
 <title>Hotel Network Diagram</title>
 
-<link rel="stylesheet" href="style.css?v=20260905-1">
+<link rel="stylesheet" href="style.css?v=20260905-2">
 
 </head>
 <body>
@@ -47,6 +47,7 @@
         </div>
 
         <button id="btnModeToggle" class="modeToggle" type="button" aria-pressed="false">🔒 Read Mode</button>
+        <button id="btnHelp" type="button">? Help / How To</button>
         <button id="btnNewDiagram" type="button">＋ New</button>
         <button id="btnSharePublish" type="button">↗ Publish</button>
         <button id="btnSyncMerge" type="button">⇄ Sync / Merge</button>
@@ -527,6 +528,47 @@
     </div>
 </div>
 
+<div id="syncProgressModal" class="modal syncProgressModal" role="dialog" aria-modal="true" aria-labelledby="syncProgressTitle">
+    <div class="modalContent syncProgressContent">
+        <h2 id="syncProgressTitle">SYNCING…</h2>
+        <div class="syncProgressHeading">
+            <strong id="syncProgressStatus">Preparing…</strong>
+            <strong id="syncProgressPercent">0%</strong>
+        </div>
+        <div id="syncProgressTrack" class="syncProgressTrack" role="progressbar" aria-label="Sync progress" aria-valuemin="0" aria-valuemax="100">
+            <span id="syncProgressBar"></span>
+        </div>
+        <p id="syncProgressDetail" class="syncProgressDetail" aria-live="polite"></p>
+        <ol id="syncProgressSteps" class="syncProgressSteps"></ol>
+        <div id="syncProgressSummary" class="syncProgressSummary" aria-live="polite"></div>
+        <div class="modalActions syncProgressActions">
+            <button id="btnCancelSyncProgress" type="button">Cancel</button>
+            <button id="btnRetrySyncProgress" type="button" hidden>Retry</button>
+            <button id="btnCloseSyncProgress" type="button" hidden>Close</button>
+        </div>
+    </div>
+</div>
+
+<div id="helpModal" class="modal helpModal" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+    <div class="modalContent helpContent">
+        <header class="helpHeader">
+            <button id="btnHelpBack" type="button" hidden>← Back</button>
+            <h2 id="helpTitle">HELP / HOW TO</h2>
+            <button id="btnCloseHelp" type="button" aria-label="Close Help">×</button>
+        </header>
+        <section id="helpHome">
+            <label class="srOnly" for="helpSearch">Search Help</label>
+            <input id="helpSearch" type="search" placeholder="Search Help…">
+            <nav id="helpCategories" class="helpCategories" aria-label="Help categories"></nav>
+            <div id="helpArticleList" class="helpArticleList"></div>
+        </section>
+        <article id="helpDetail" class="helpDetail" hidden>
+            <h3 id="helpArticleTitle"></h3>
+            <div id="helpArticleBody"></div>
+        </article>
+    </div>
+</div>
+
 <div id="diagramSettingsModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="diagramSettingsModalTitle">
     <div class="modalContent settingsContent">
         <h2 id="diagramSettingsModalTitle">Device Settings</h2>
@@ -610,9 +652,11 @@
 
 </div>
 
-<script src="sync-engine.js?v=20260905-1"></script>
-<script src="app.js?v=20260905-1"></script>
-<script type="module" src="firebase.js?v=20260905-1"></script>
+<script src="sync-engine.js?v=20260905-2"></script>
+<script src="sync-progress.js?v=20260905-2"></script>
+<script src="help.js?v=20260905-2"></script>
+<script src="app.js?v=20260905-2"></script>
+<script type="module" src="firebase.js?v=20260905-2"></script>
 </body>
 
 </html>
