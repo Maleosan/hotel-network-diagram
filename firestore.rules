@@ -6,11 +6,16 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == userId;
     }
 
+    function isPublicationOwner(data) {
+      return request.auth != null && (
+        ('ownerUid' in data && data.ownerUid == request.auth.uid) ||
+        ('ownerId' in data && data.ownerId == request.auth.uid)
+      );
+    }
+
     function canReadPublishedData(data) {
       return request.auth != null && (
-        data.ownerId == request.auth.uid ||
-        request.auth.uid in data.allowedUserIds ||
-        (request.auth.token.email is string && request.auth.token.email in data.allowedEmails)
+        data.published == true || isPublicationOwner(data)
       );
     }
 
@@ -19,7 +24,7 @@ service cloud.firestore {
     }
 
     function ownsPublication(publicationId) {
-      return request.auth != null && get(/databases/$(database)/documents/publishedDiagrams/$(publicationId)).data.ownerId == request.auth.uid;
+      return isPublicationOwner(get(/databases/$(database)/documents/publishedDiagrams/$(publicationId)).data);
     }
 
     match /users/{userId} {
@@ -43,6 +48,14 @@ service cloud.firestore {
         match /syncStates/{publicationId} {
           allow read, create, update, delete: if isOwner(userId);
         }
+
+        match /syncBases/{publicationId} {
+          allow read, create, update, delete: if isOwner(userId);
+
+          match /chunks/{chunkId} {
+            allow read, create, update, delete: if isOwner(userId);
+          }
+        }
       }
     }
 
@@ -51,10 +64,10 @@ service cloud.firestore {
         !exists(/databases/$(database)/documents/publishedDiagrams/$(publicationId)) ||
         canReadPublishedData(resource.data)
       );
-      allow list: if canReadPublishedData(resource.data);
-      allow create: if request.auth != null && request.resource.data.ownerId == request.auth.uid;
-      allow update: if request.auth != null && resource.data.ownerId == request.auth.uid && request.resource.data.ownerId == request.auth.uid;
-      allow delete: if request.auth != null && resource.data.ownerId == request.auth.uid;
+      allow list: if request.auth != null && resource.data.published == true;
+      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if isPublicationOwner(resource.data) && request.resource.data.ownerUid == request.auth.uid;
+      allow delete: if isPublicationOwner(resource.data);
 
       match /changes/{changeId} {
         allow read: if canReadPublication(publicationId);
@@ -62,6 +75,11 @@ service cloud.firestore {
       }
 
       match /photos/{photoId} {
+        allow read: if canReadPublication(publicationId);
+        allow create, update, delete: if ownsPublication(publicationId);
+      }
+
+      match /sourceChunks/{chunkId} {
         allow read: if canReadPublication(publicationId);
         allow create, update, delete: if ownsPublication(publicationId);
       }
