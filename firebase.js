@@ -17,6 +17,7 @@ import {
     getDoc,
     getDocs,
     getFirestore,
+    limit,
     orderBy,
     query,
     serverTimestamp,
@@ -46,6 +47,7 @@ const PHOTO_VERIFICATION_CACHE_PREFIX="hotelNetworkDiagram.photoVerification.";
 const PUBLICATION_COLLECTION="publishedDiagrams";
 const CHANGE_EVENT="hotel-network-diagram-change";
 const bridge=window.hotelNetworkDiagramCloudBridge;
+const syncEngine=window.HotelSyncEngine;
 
 const authGate=document.getElementById("authGate");
 const authMessage=document.getElementById("authMessage");
@@ -63,9 +65,10 @@ const shareButton=document.getElementById("btnSharePublish");
 const syncButton=document.getElementById("btnSyncMerge");
 const shareModal=document.getElementById("sharePublishModal");
 const syncModal=document.getElementById("syncMergeModal");
-const shareRecipients=document.getElementById("shareRecipients");
 const shareStatus=document.getElementById("sharePublishStatus");
 const syncSourceSelect=document.getElementById("syncSourceSelect");
+const syncSourceSearch=document.getElementById("syncSourceSearch");
+const publishedDiagramList=document.getElementById("publishedDiagramList");
 const syncVersionStatus=document.getElementById("syncVersionStatus");
 const syncChangesList=document.getElementById("syncChangesList");
 
@@ -84,6 +87,7 @@ let photoLoadFailures=0;
 let lastSavedCloudData=null;
 let loadedSyncChanges=[];
 let loadedSyncState=null;
+let availablePublications=[];
 let saveTimer=null;
 let saveRunning=false;
 let saveQueued=false;
@@ -176,6 +180,9 @@ function getPublicationId(uid){return `pub-${uid}-${DIAGRAM_ID}`;}
 function getPublicationRef(publicationId){return doc(db,PUBLICATION_COLLECTION,publicationId);}
 function getPublishedChangeRef(publicationId,changeId){return doc(db,PUBLICATION_COLLECTION,publicationId,"changes",changeId);}
 function getPublishedPhotoRef(publicationId,photoId){return doc(db,PUBLICATION_COLLECTION,publicationId,"photos",photoId);}
+function getPublishedChunkRef(publicationId,revision,index){return doc(db,PUBLICATION_COLLECTION,publicationId,"sourceChunks",getChunkId(revision,index));}
+function getSyncBaseRef(uid,publicationId){return doc(db,"users",uid,"diagrams",DIAGRAM_ID,"syncBases",publicationId);}
+function getSyncBaseChunkRef(uid,publicationId,revision,index){return doc(db,"users",uid,"diagrams",DIAGRAM_ID,"syncBases",publicationId,"chunks",getChunkId(revision,index));}
 
 function cloneValue(value){
     if(value===undefined)return null;
@@ -452,15 +459,6 @@ function waitForSaveIdle(timeout=15000){
     return new Promise((resolve,reject)=>{const check=()=>{if(!saveRunning){resolve();return;}if(Date.now()-started>timeout){reject(new Error("Save sebelumnya belum selesai."));return;}setTimeout(check,100);};check();});
 }
 
-function parseShareRecipients(value){
-    const emails=[],userIds=[];
-    String(value||"").split(/[\n,;]+/).map(item=>item.trim()).filter(Boolean).forEach(item=>{
-        if(item.includes("@")){const email=item.toLowerCase();if(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)&&!emails.includes(email))emails.push(email);}
-        else if(/^[a-z0-9_-]{8,128}$/i.test(item)&&!userIds.includes(item))userIds.push(item);
-    });
-    return{emails:emails.slice(0,40),userIds:userIds.slice(0,40)};
-}
-
 async function getPrivateChangesSince(uid,version){
     const snapshot=await getDocs(query(collection(db,"users",uid,"diagrams",DIAGRAM_ID,"changes"),where("newVersion",">",version),orderBy("newVersion")));
     return snapshot.docs.map(item=>item.data()).sort((a,b)=>a.newVersion-b.newVersion||String(a.changeId).localeCompare(String(b.changeId)));
@@ -477,87 +475,55 @@ function getPhotoIdsFromChanges(changes){
 }
 
 async function publishDiagram(){
-    if(!currentUser||!diagramReady)throw new Error("Login Google diperlukan untuk Share / Publish.");
-    const recipients=parseShareRecipients(shareRecipients.value);
-    if(!recipients.emails.length&&!recipients.userIds.length)throw new Error("Masukkan minimal satu email Google atau Firebase UID penerima.");
+    if(!currentUser||!diagramReady)throw new Error("Login Google diperlukan untuk Publish.");
     await waitForSaveIdle();await saveNow({manual:true});await waitForSaveIdle();if(lastSaveError)throw lastSaveError;
     const publicationId=getPublicationId(currentUser.uid),reference=getPublicationRef(publicationId),existingSnapshot=await getDoc(reference),existing=existingSnapshot.exists()?existingSnapshot.data():null;
-    const publishedVersion=Math.max(0,Number(existing?.latestVersion)||0);
+    const publishedVersion=Math.max(0,Number(existing?.publishedVersion??existing?.latestVersion)||0);
     const changes=existing?(await getPrivateChangesSince(currentUser.uid,publishedVersion)).filter(change=>change.newVersion<=knownVersion):buildChangeRecords(null,lastSavedCloudData,0,knownVersion,currentUser.uid);
-    const publicationBase={ownerId:currentUser.uid,ownerName:currentUser.displayName||"Google User",ownerEmail:(currentUser.email||"").toLowerCase(),diagramId:DIAGRAM_ID,name:String(lastSavedCloudData?.diagramName||"HOTEL NETWORK DIAGRAM").slice(0,80),allowedEmails:recipients.emails,allowedUserIds:recipients.userIds};
-    await setDoc(reference,{...publicationBase,latestVersion:publishedVersion,updatedAt:serverTimestamp(),createdAt:existing?.createdAt||serverTimestamp()},{merge:true});
+    const serialized=JSON.stringify(lastSavedCloudData),chunks=chunkUtf8String(serialized),sourceRevision=`source-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+    if(chunks.length>MAX_CHUNK_COUNT)throw new Error("Diagram terlalu besar untuk dipublish.");
+    const publicationBase={ownerUid:currentUser.uid,displayName:currentUser.displayName||"Google User",photoURL:currentUser.photoURL||"",diagramId:DIAGRAM_ID,diagramName:String(lastSavedCloudData?.diagramName||"HOTEL NETWORK DIAGRAM").slice(0,80)};
+    await setDoc(reference,{...publicationBase,published:false,publishedVersion,updatedAt:serverTimestamp(),allowedEmails:deleteField(),allowedUserIds:deleteField(),ownerEmail:deleteField(),name:deleteField(),latestVersion:deleteField(),ownerId:deleteField()},{merge:true});
+    await runLimited(chunks.map((data,index)=>()=>setDoc(getPublishedChunkRef(publicationId,sourceRevision,index),{revision:sourceRevision,index,data,ownerUid:currentUser.uid})));
     await runLimited(changes.map(change=>()=>setDoc(getPublishedChangeRef(publicationId,change.changeId),{...change,publishedAt:serverTimestamp()})));
-    await runLimited([...getPhotoIdsFromChanges(changes)].map(photoId=>async()=>{
+    const allPhotoIds=new Set((lastSavedCloudData?.nodes||[]).map(node=>node.pictureId).filter(Boolean));
+    await runLimited([...allPhotoIds].map(photoId=>async()=>{
+        const published=await getDoc(getPublishedPhotoRef(publicationId,photoId));
+        const expected=(lastSavedCloudData.nodes||[]).find(node=>node.pictureId===photoId)?.pictureHash;
+        if(published.exists()&&published.data()?.hash===expected)return;
         const source=await getDoc(getPhotoRef(currentUser.uid,photoId));
         if(!source.exists())throw new Error(`Foto ${photoId} belum tersedia di cloud. Klik Save to Cloud lalu coba publish lagi.`);
-        await setDoc(getPublishedPhotoRef(publicationId,photoId),{...source.data(),ownerId:currentUser.uid,publishedAt:serverTimestamp()});
+        await setDoc(getPublishedPhotoRef(publicationId,photoId),{...source.data(),ownerUid:currentUser.uid,publishedAt:serverTimestamp()});
     }));
-    await setDoc(reference,{...publicationBase,latestVersion:knownVersion,updatedAt:serverTimestamp()},{merge:true});
-    shareStatus.textContent=`✓ Published v${knownVersion} · ${changes.length} field change(s) · ${recipients.emails.length+recipients.userIds.length} recipient(s)`;
+    await setDoc(reference,{...publicationBase,published:true,publishedAt:existing?.publishedAt||serverTimestamp(),publishedVersion:knownVersion,sourceRevision,sourceChunkCount:chunks.length,sourceChecksum:hashString(serialized),sourceByteLength:new TextEncoder().encode(serialized).length,updatedAt:serverTimestamp()},{merge:true});
+    if(existing?.sourceRevision&&existing.sourceRevision!==sourceRevision)deletePublishedChunks(publicationId,existing.sourceRevision,Number(existing.sourceChunkCount)||0).catch(error=>console.warn("Old published snapshot could not be removed",error));
+    shareStatus.textContent=`✓ Published globally · v${knownVersion} · ${changes.length} field change(s)`;
+    document.getElementById("btnUnpublish").hidden=false;
     bridge.showFeedback(`Diagram published at version ${knownVersion}.`,false);
 }
 
+async function deletePublishedChunks(publicationId,revision,count){
+    await runLimited(Array.from({length:count},(_,index)=>()=>deleteDoc(getPublishedChunkRef(publicationId,revision,index))));
+}
+
+async function unpublishDiagram(){
+    if(!currentUser)throw new Error("Login Google diperlukan.");
+    const reference=getPublicationRef(getPublicationId(currentUser.uid)),snapshot=await getDoc(reference);
+    if(!snapshot.exists()||snapshot.data()?.ownerUid!==currentUser.uid)throw new Error("Publikasi milik Anda tidak ditemukan.");
+    await setDoc(reference,{published:false,updatedAt:serverTimestamp()},{merge:true});
+    shareStatus.textContent="Diagram tidak dipublish. Data privat Anda tetap tersimpan.";
+    document.getElementById("btnUnpublish").hidden=true;
+    bridge.showFeedback("Diagram berhasil di-unpublish.",false);
+}
+
 async function listAvailablePublications(){
-    const found=new Map(),root=collection(db,PUBLICATION_COLLECTION),requests=[{scope:"UID",value:query(root,where("allowedUserIds","array-contains",currentUser.uid))}];
-    if(currentUser.email)requests.push({scope:"email",value:query(root,where("allowedEmails","array-contains",currentUser.email.toLowerCase()))});
-    const results=await Promise.allSettled(requests.map(item=>getDocs(item.value)));
-    let successfulQueries=0,firstError=null;
-    results.forEach((result,index)=>{
-        if(result.status==="fulfilled"){
-            successfulQueries++;
-            result.value.docs.forEach(item=>found.set(item.id,{id:item.id,...item.data()}));
-            return;
-        }
-        firstError||=result.reason;
-        console.warn(`Shared diagram ${requests[index].scope} query failed`,result.reason);
-    });
-    if(!successfulQueries&&firstError)throw firstError;
-    return[...found.values()].sort((a,b)=>String(a.ownerName||a.ownerEmail).localeCompare(String(b.ownerName||b.ownerEmail)));
+    const snapshot=await getDocs(query(collection(db,PUBLICATION_COLLECTION),where("published","==",true),limit(100)));
+    return snapshot.docs.map(item=>({id:item.id,...item.data()})).sort((a,b)=>String(a.displayName||a.ownerUid).localeCompare(String(b.displayName||b.ownerUid)));
 }
 
 async function loadSyncState(publicationId){
     const snapshot=await getDoc(getSyncStateRef(currentUser.uid,publicationId));
     return snapshot.exists()?snapshot.data():{lastSyncedVersion:0,resolvedChangeIds:[]};
-}
-
-function getTargetCollection(layout,targetType){
-    if(targetType==="device")return layout.nodes;
-    if(targetType==="connection")return layout.links;
-    if(targetType==="annotation")return layout.annotations;
-    return null;
-}
-
-function comparableEntity(value){
-    if(!value||typeof value!=="object")return value;
-    const {pictureData,...copy}=value;return copy;
-}
-
-function getCurrentChangeValue(layout,change){
-    const entry=change.changedFields?.[0];
-    if(change.targetType==="diagram")return layout[change.field];
-    const collectionValue=getTargetCollection(layout,change.targetType),target=collectionValue?.find(item=>String(item.id)===String(change.targetId));
-    if(change.field==="$entity")return comparableEntity(target||null);
-    if(change.field==="position")return{x:target?.x,y:target?.y};
-    if(change.field==="image"){
-        const parsed=parseImageDataUrl(target?.pictureData);
-        if(parsed){const pictureHash=hashString(parsed.base64);return{pictureId:`device-${hashString(String(target.id||"device"))}-${pictureHash}`,pictureHash};}
-        return{pictureId:target?.pictureId||null,pictureHash:target?.pictureHash||null};
-    }
-    return target?.[change.field];
-}
-
-function hasConnectionResourceConflict(layout,change,after){
-    if(change.targetType!=="connection"||change.operation==="delete")return false;
-    const current=layout.links.find(link=>String(link.id)===String(change.targetId));
-    let candidate=change.field==="$entity"?cloneValue(after):(current?{...current,[change.field]:cloneValue(after)}:null);
-    if(!candidate)return true;
-    return layout.links.some(link=>{
-        if(String(link.id)===String(change.targetId))return false;
-        const samePair=new Set([String(link.from),String(link.to)]).size===new Set([String(candidate.from),String(candidate.to)]).size&&[String(candidate.from),String(candidate.to)].every(id=>id===String(link.from)||id===String(link.to));
-        const sourceConflict=Number(candidate.sourcePort)>0&&((String(link.from)===String(candidate.from)&&Number(link.sourcePort)===Number(candidate.sourcePort))||(String(link.to)===String(candidate.from)&&Number(link.targetPort)===Number(candidate.sourcePort)));
-        const targetConflict=Number(candidate.targetPort)>0&&((String(link.from)===String(candidate.to)&&Number(link.sourcePort)===Number(candidate.targetPort))||(String(link.to)===String(candidate.to)&&Number(link.targetPort)===Number(candidate.targetPort)));
-        return samePair||sourceConflict||targetConflict;
-    });
 }
 
 function formatChangeValue(value){
@@ -571,62 +537,75 @@ function createSyncChangeRow(item){
     const checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.className="syncApply";checkbox.checked=!item.conflict;checkbox.disabled=item.conflict;checkbox.setAttribute("aria-label",`Apply ${item.targetLabel} ${item.field}`);
     const content=document.createElement("div"),title=document.createElement("strong");title.textContent=`${item.targetLabel} · ${item.field==="$entity"?item.operation:item.field}`;
     const details=document.createElement("dl"),beforeTitle=document.createElement("dt"),beforeValue=document.createElement("dd"),afterTitle=document.createElement("dt"),afterValue=document.createElement("dd");
-    beforeTitle.textContent="Current";beforeValue.textContent=formatChangeValue(item.current);afterTitle.textContent="Shared";afterValue.textContent=formatChangeValue(item.after);details.append(beforeTitle,beforeValue,afterTitle,afterValue);content.append(title,details);row.append(checkbox,content);
+    beforeTitle.textContent="Current";beforeValue.textContent=formatChangeValue(item.current);afterTitle.textContent="Source";afterValue.textContent=formatChangeValue(item.after);details.append(beforeTitle,beforeValue,afterTitle,afterValue);content.append(title,details);row.append(checkbox,content);
     if(item.conflict){
-        const choice=document.createElement("label");choice.className="syncConflictChoice";choice.textContent="Conflict: ";const select=document.createElement("select");select.className="syncResolution";[["shared","Use shared version"],["mine","Keep mine"],["defer","Review later"]].forEach(([value,label])=>{const option=document.createElement("option");option.value=value;option.textContent=label;select.appendChild(option);});select.value="defer";checkbox.checked=false;choice.appendChild(select);row.appendChild(choice);
+        const choice=document.createElement("label");choice.className="syncConflictChoice";choice.textContent=`Conflict${item.reason?` (${item.reason})`:""}: `;const select=document.createElement("select");select.className="syncResolution";[["source","Use source version"],["mine","Keep mine"],["defer","Review later"]].forEach(([value,label])=>{const option=document.createElement("option");option.value=value;option.textContent=label;select.appendChild(option);});select.value="defer";checkbox.checked=false;choice.appendChild(select);row.appendChild(choice);
     }
     return row;
+}
+
+async function readChunkedLayout(getReference,revision,count,checksum){
+    if(!revision||!Number.isInteger(count)||count<1||count>MAX_CHUNK_COUNT)throw new Error("Snapshot sumber tidak valid. Pemilik perlu Publish ulang.");
+    const snapshots=await Promise.all(Array.from({length:count},(_,index)=>getDoc(getReference(revision,index))));
+    if(snapshots.some(item=>!item.exists()))throw new Error("Snapshot sumber belum lengkap. Pemilik perlu Publish ulang.");
+    const serialized=snapshots.map(item=>String(item.data()?.data||"")).join("");
+    if(checksum&&hashString(serialized)!==checksum)throw new Error("Checksum snapshot sumber tidak cocok.");
+    return JSON.parse(serialized);
+}
+
+async function loadPublishedLayout(publication){
+    return readChunkedLayout((revision,index)=>getPublishedChunkRef(publication.id,revision,index),publication.sourceRevision,Number(publication.sourceChunkCount),publication.sourceChecksum);
+}
+
+async function loadSyncBase(publicationId){
+    const snapshot=await getDoc(getSyncBaseRef(currentUser.uid,publicationId));if(!snapshot.exists())return null;
+    const data=snapshot.data()||{};
+    const layout=await readChunkedLayout((revision,index)=>getSyncBaseChunkRef(currentUser.uid,publicationId,revision,index),data.revision,Number(data.chunkCount),data.checksum);
+    return{layout,version:Number(data.version)||0,revision:data.revision,chunkCount:Number(data.chunkCount)||0};
+}
+
+async function saveSyncBase(publicationId,layout,version){
+    const reference=getSyncBaseRef(currentUser.uid,publicationId),old=await getDoc(reference),previous=old.exists()?old.data():null;
+    const serialized=JSON.stringify(layout),chunks=chunkUtf8String(serialized),revision=`base-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+    await runLimited(chunks.map((data,index)=>()=>setDoc(getSyncBaseChunkRef(currentUser.uid,publicationId,revision,index),{revision,index,data})));
+    await setDoc(reference,{version,revision,chunkCount:chunks.length,checksum:hashString(serialized),updatedAt:serverTimestamp()});
+    if(previous?.revision&&previous.revision!==revision)runLimited(Array.from({length:Number(previous.chunkCount)||0},(_,index)=>()=>deleteDoc(getSyncBaseChunkRef(currentUser.uid,publicationId,previous.revision,index)))).catch(error=>console.warn("Old sync base could not be removed",error));
+}
+
+async function getPublishedChanges(publicationId,fromVersion,toVersion){
+    if(toVersion<=fromVersion)return[];
+    const snapshot=await getDocs(query(collection(db,PUBLICATION_COLLECTION,publicationId,"changes"),where("newVersion",">",fromVersion),where("newVersion","<=",toVersion),orderBy("newVersion")));
+    return snapshot.docs.map(item=>({id:item.id,...item.data()})).sort((a,b)=>a.newVersion-b.newVersion||String(a.changeId).localeCompare(String(b.changeId)));
 }
 
 async function reviewSelectedPublication(){
     const publicationId=syncSourceSelect.value;if(!publicationId)return;
     const publicationSnapshot=await getDoc(getPublicationRef(publicationId));if(!publicationSnapshot.exists())throw new Error("Published diagram tidak ditemukan.");
-    const publication={id:publicationId,...publicationSnapshot.data()},state=await loadSyncState(publicationId);let cursor=Math.max(0,Number(state.lastSyncedVersion)||0);const resolved=new Set(Array.isArray(state.resolvedChangeIds)?state.resolvedChangeIds:[]);
-    const latestVersion=Math.max(cursor,Number(publication.latestVersion)||0);
-    const snapshot=latestVersion>cursor?await getDocs(query(collection(db,PUBLICATION_COLLECTION,publicationId,"changes"),where("newVersion",">",cursor),where("newVersion","<=",latestVersion),orderBy("newVersion"))):{docs:[]};
-    const layout=bridge.getDiagramData(),allChanges=snapshot.docs.map(item=>({id:item.id,...item.data()})).sort((a,b)=>a.newVersion-b.newVersion||String(a.changeId).localeCompare(String(b.changeId))),reviewed=allChanges.filter(item=>!resolved.has(item.changeId)).map(change=>{
-        const entry=change.changedFields?.[0]||{},current=getCurrentChangeValue(layout,change),alreadyApplied=valuesEqual(current,entry.after),conflict=!alreadyApplied&&(!valuesEqual(current,entry.before)||hasConnectionResourceConflict(layout,change,entry.after));
-        return{...change,before:entry.before,after:entry.after,current,alreadyApplied,conflict};
-    });
-    reviewed.filter(item=>item.alreadyApplied).forEach(item=>resolved.add(item.changeId));
-    for(const version of [...new Set(allChanges.map(item=>item.newVersion))].sort((a,b)=>a-b)){if(allChanges.filter(item=>item.newVersion===version).every(item=>resolved.has(item.changeId)))cursor=version;else break;}
-    const remainingResolved=[...resolved].filter(id=>{const item=allChanges.find(change=>change.changeId===id);return !item||item.newVersion>cursor;}).slice(-500);
-    if(cursor!==Math.max(0,Number(state.lastSyncedVersion)||0))await setDoc(getSyncStateRef(currentUser.uid,publicationId),{lastSyncedVersion:cursor,resolvedChangeIds:remainingResolved,lastSourceVersion:publication.latestVersion||cursor,lastSyncTime:serverTimestamp()},{merge:true});
-    loadedSyncChanges=reviewed.filter(item=>!item.alreadyApplied);loadedSyncState={...state,lastSyncedVersion:cursor,resolvedChangeIds:remainingResolved,publication};syncChangesList.innerHTML="";
+    const publication={id:publicationId,...publicationSnapshot.data()};if(!publication.published)throw new Error("Diagram ini sudah di-unpublish oleh pemiliknya.");
+    const state=await loadSyncState(publicationId),cursor=Math.max(0,Number(state.lastSyncedVersion)||0),latestVersion=Math.max(cursor,Number(publication.publishedVersion)||0),resolved=new Set(Array.isArray(state.resolvedChangeIds)?state.resolvedChangeIds:[]);
+    const base=await loadSyncBase(publicationId),trustedBase=Boolean(base&&base.version===cursor&&cursor>0),incremental=trustedBase?await getPublishedChanges(publicationId,cursor,latestVersion):[];
+    const sourceLayout=trustedBase?syncEngine.reconstructSource(base.layout,incremental):await loadPublishedLayout(publication);
+    const currentCloud=prepareCloudDiagram(bridge.getDiagramData()).cloudData,similarity=syncEngine.similarity(currentCloud,sourceLayout);
+    const plan=syncEngine.planThreeWay(trustedBase?base.layout:null,currentCloud,sourceLayout,{trustedBase}).map(item=>({...item,changeId:`v${latestVersion}-${item.targetType}-${item.targetId}-${item.field}`}));
+    plan.filter(item=>item.alreadyApplied).forEach(item=>resolved.add(item.changeId));
+    loadedSyncChanges=plan.filter(item=>!item.alreadyApplied&&!resolved.has(item.changeId));
+    loadedSyncState={...state,lastSyncedVersion:cursor,resolvedChangeIds:[...resolved],publication,sourceLayout,allPlan:plan,similarity,trustedBase};syncChangesList.innerHTML="";
     if(!loadedSyncChanges.length){const empty=document.createElement("p");empty.className="syncEmpty";empty.textContent="✓ Up to date";syncChangesList.appendChild(empty);}
     else loadedSyncChanges.forEach(item=>syncChangesList.appendChild(createSyncChangeRow(item)));
-    syncVersionStatus.textContent=`Your cursor: v${cursor} · ${publication.ownerName||publication.ownerEmail||"Shared user"}: v${publication.latestVersion||0} · ${loadedSyncChanges.length} change(s) available`;
+    const baseMessage=trustedBase?"Common base verified":"No common base — review carefully or replace";
+    syncVersionStatus.innerHTML=`${baseMessage} · Your cursor v${cursor} · Source v${latestVersion} · ${loadedSyncChanges.length} change(s) · Similarity <span class="similarityBadge ${similarity.level}">${similarity.score}% ${similarity.label}</span>`;
+    document.getElementById("btnSyncSelected").hidden=false;
 }
 
 async function hydrateMergedPhotos(layout,publicationId,photoIds){
     for(const photoId of photoIds){
         const node=layout.nodes.find(item=>item.pictureId===photoId);if(!node)continue;
+        const cached=parseImageDataUrl(node.pictureData);if(cached&&hashString(cached.base64)===node.pictureHash)continue;
         const snapshot=await getDoc(getPublishedPhotoRef(publicationId,photoId));if(!snapshot.exists())throw new Error(`Published photo ${photoId} tidak ditemukan.`);
         const photo=snapshot.data()||{},verified=readVerifiedPhotoSnapshot(snapshot,node.pictureHash);
         if(!verified)throw new Error(`Published photo ${photoId} tidak valid.`);
         node.pictureData=`data:${verified.mimeType};base64,${verified.base64}`;
     }
-}
-
-function applySharedChange(layout,change,photoIds){
-    const after=cloneValue(change.after);
-    if(change.targetType==="diagram"){layout[change.field]=after;return true;}
-    const values=getTargetCollection(layout,change.targetType);if(!values)return false;
-    const index=values.findIndex(item=>String(item.id)===String(change.targetId));
-    if(change.field==="$entity"){
-        if(change.operation==="delete"){if(index>=0)values.splice(index,1);return true;}
-        if(index>=0)values[index]=after;else values.push(after);
-        if(after?.pictureId)photoIds.add(after.pictureId);return true;
-    }
-    if(index<0)return false;
-    if(change.field==="position"){values[index].x=after?.x;values[index].y=after?.y;return true;}
-    if(change.field==="image"){
-        values[index].pictureId=after?.pictureId||null;values[index].pictureHash=after?.pictureHash||null;
-        if(after?.pictureId)photoIds.add(after.pictureId);else values[index].pictureData="";
-        return true;
-    }
-    values[index][change.field]=after;
-    return true;
 }
 
 function validateMergedLayout(layout){
@@ -638,45 +617,59 @@ function validateMergedLayout(layout){
     }
 }
 
-async function syncReviewedChanges({all=false}={}){
+async function syncReviewedChanges({smart=false}={}){
     if(!loadedSyncState?.publication)throw new Error("Pilih dan review published diagram terlebih dahulu.");
     const layout=cloneValue(bridge.getDiagramData()),resolved=new Set(Array.isArray(loadedSyncState.resolvedChangeIds)?loadedSyncState.resolvedChangeIds:[]),photoIds=new Set();
     let selectedCount=0;
     for(const change of loadedSyncChanges){
         const row=syncChangesList.querySelector(`[data-change-id="${CSS.escape(change.changeId)}"]`),checkbox=row?.querySelector(".syncApply"),resolution=row?.querySelector(".syncResolution")?.value;
-        let action=all?"shared":change.conflict?resolution:(checkbox?.checked?"shared":"defer");
+        let action=smart?(change.conflict?"defer":"source"):(change.conflict?resolution:(checkbox?.checked?"source":"defer"));
         if(action==="defer"||!action)continue;
         selectedCount++;
-        if(action==="shared"&&!applySharedChange(layout,change,photoIds))throw new Error(`Target ${change.targetLabel} belum ada. Pilih juga perubahan create yang terkait.`);
+        if(action==="source"&&!syncEngine.applyChange(layout,change))throw new Error(`Target ${change.targetLabel} belum ada. Pilih juga perubahan create yang terkait.`);
+        if(action==="source"&&change.after?.pictureId)photoIds.add(change.after.pictureId);
         resolved.add(change.changeId);
     }
-    if(!selectedCount)throw new Error("Tidak ada perubahan yang dipilih.");
+    if(!selectedCount){if(smart&&loadedSyncChanges.some(item=>item.conflict))throw new Error("Semua perubahan yang tersisa adalah conflict. Gunakan Review Changes.");throw new Error("Tidak ada perubahan yang dipilih.");}
     validateMergedLayout(layout);
     await hydrateMergedPhotos(layout,loadedSyncState.publication.id,photoIds);
-    bridge.loadDiagramData(layout);await saveNow({manual:true});await waitForSaveIdle();if(lastSaveError)throw lastSaveError;
-    let cursor=Math.max(0,Number(loadedSyncState.lastSyncedVersion)||0);
-    const versions=[...new Set(loadedSyncChanges.map(item=>item.newVersion))].sort((a,b)=>a-b);
-    for(const version of versions){const atVersion=loadedSyncChanges.filter(item=>item.newVersion===version);if(atVersion.every(item=>resolved.has(item.changeId)))cursor=version;else break;}
-    const remaining=[...resolved].filter(id=>{const item=loadedSyncChanges.find(change=>change.changeId===id);return !item||item.newVersion>cursor;}).slice(-500);
-    await setDoc(getSyncStateRef(currentUser.uid,loadedSyncState.publication.id),{sourceOwnerId:loadedSyncState.publication.ownerId,sourceName:loadedSyncState.publication.ownerName||loadedSyncState.publication.ownerEmail||"Shared user",lastSyncedFromUser:loadedSyncState.publication.ownerId,lastSyncedDiagram:loadedSyncState.publication.diagramId||DIAGRAM_ID,lastSyncedVersion:cursor,lastSourceVersion:loadedSyncState.publication.latestVersion||cursor,resolvedChangeIds:remaining,lastSyncTime:serverTimestamp()},{merge:true});
+    bridge.loadDiagramData(layout,{checkpoint:true});await saveNow({manual:true});await waitForSaveIdle();if(lastSaveError)throw lastSaveError;
+    const allResolved=loadedSyncState.allPlan.every(item=>item.alreadyApplied||resolved.has(item.changeId)),cursor=allResolved?Number(loadedSyncState.publication.publishedVersion)||0:Number(loadedSyncState.lastSyncedVersion)||0,remaining=allResolved?[]:[...resolved].slice(-500);
+    if(allResolved)await saveSyncBase(loadedSyncState.publication.id,loadedSyncState.sourceLayout,cursor);
+    await setDoc(getSyncStateRef(currentUser.uid,loadedSyncState.publication.id),{sourceOwnerUid:loadedSyncState.publication.ownerUid,sourceName:loadedSyncState.publication.displayName||"Published user",lastSyncedFromUser:loadedSyncState.publication.ownerUid,lastSyncedDiagram:loadedSyncState.publication.diagramId||DIAGRAM_ID,lastSyncedVersion:cursor,lastSourceVersion:loadedSyncState.publication.publishedVersion||cursor,resolvedChangeIds:remaining,lastSyncTime:serverTimestamp()},{merge:true});
     bridge.showFeedback(`Sync selesai. Cursor sekarang v${cursor}.`,false);await reviewSelectedPublication();
 }
 
+async function replaceWithPublishedDiagram(){
+    if(!syncSourceSelect.value)throw new Error("Pilih published diagram terlebih dahulu.");
+    const snapshot=await getDoc(getPublicationRef(syncSourceSelect.value));if(!snapshot.exists()||!snapshot.data()?.published)throw new Error("Published diagram tidak tersedia.");
+    const publication={id:snapshot.id,...snapshot.data()},sourceLayout=await loadPublishedLayout(publication),photoIds=new Set((sourceLayout.nodes||[]).map(node=>node.pictureId).filter(Boolean));
+    await hydrateMergedPhotos(sourceLayout,publication.id,photoIds);validateMergedLayout(sourceLayout);
+    bridge.loadDiagramData(sourceLayout,{checkpoint:true});await saveNow({manual:true});await waitForSaveIdle();if(lastSaveError)throw lastSaveError;
+    await saveSyncBase(publication.id,prepareCloudDiagram(sourceLayout).cloudData,Number(publication.publishedVersion)||0);
+    await setDoc(getSyncStateRef(currentUser.uid,publication.id),{sourceOwnerUid:publication.ownerUid,sourceName:publication.displayName||"Published user",lastSyncedFromUser:publication.ownerUid,lastSyncedDiagram:publication.diagramId||DIAGRAM_ID,lastSyncedVersion:Number(publication.publishedVersion)||0,lastSourceVersion:Number(publication.publishedVersion)||0,resolvedChangeIds:[],lastSyncTime:serverTimestamp()},{merge:true});
+    bridge.showFeedback("Diagram diganti seluruhnya. Undo tersedia bila ingin mengembalikan keadaan sebelumnya.",false);syncModal.style.display="none";
+}
+
 async function openShareModal(){
-    if(!currentUser){bridge.showFeedback("Login Google diperlukan untuk Share / Publish.",true);return;}
+    if(!currentUser){bridge.showFeedback("Login Google diperlukan untuk Publish.",true);return;}
     const snapshot=await getDoc(getPublicationRef(getPublicationId(currentUser.uid)));
-    if(snapshot.exists()){const data=snapshot.data();shareRecipients.value=[...(data.allowedEmails||[]),...(data.allowedUserIds||[])].join("\n");shareStatus.textContent=`Published version: v${data.latestVersion||0}`;}
-    else shareStatus.textContent="Belum dipublish.";
-    shareModal.style.display="flex";shareRecipients.focus();
+    if(snapshot.exists()&&snapshot.data()?.published){const data=snapshot.data();shareStatus.textContent=`Published globally · v${data.publishedVersion||0} · ${data.diagramName||"Diagram"}`;document.getElementById("btnUnpublish").hidden=false;}
+    else{shareStatus.textContent="Belum dipublish.";document.getElementById("btnUnpublish").hidden=true;}
+    shareModal.style.display="flex";document.getElementById("btnConfirmSharePublish").focus();
+}
+
+function renderPublishedDiagramList(){
+    const term=syncSourceSearch.value.trim().toLowerCase(),items=availablePublications.filter(item=>item.ownerUid!==currentUser.uid&&(!term||`${item.displayName||""} ${item.diagramName||""}`.toLowerCase().includes(term)));
+    publishedDiagramList.innerHTML="";
+    if(!items.length){const empty=document.createElement("p");empty.className="syncEmpty";empty.textContent=term?"No matching published diagrams.":"No published diagrams available.";publishedDiagramList.appendChild(empty);return;}
+    items.forEach(item=>{const button=document.createElement("button");button.type="button";button.className=`publishedDiagramCard${syncSourceSelect.value===item.id?" selected":""}`;button.dataset.publicationId=item.id;const title=document.createElement("strong"),owner=document.createElement("small"),version=document.createElement("span");title.textContent=item.diagramName||"Diagram";owner.textContent=item.displayName||"Published user";version.className="publicationVersion";version.textContent=`v${item.publishedVersion||0}`;button.append(title,owner,version);button.addEventListener("click",()=>{syncSourceSelect.value=item.id;loadedSyncState=null;loadedSyncChanges=[];renderPublishedDiagramList();syncVersionStatus.textContent=`Selected ${item.displayName||"Published user"} · ${item.diagramName||"Diagram"}. Choose Smart Merge, Review Changes, or Replace.`;syncChangesList.innerHTML='<p class="syncEmpty">Source metadata selected. Full data has not been downloaded.</p>';document.getElementById("btnSyncSelected").hidden=true;});publishedDiagramList.appendChild(button);});
 }
 
 async function openSyncModal(){
     if(!currentUser){bridge.showFeedback("Login Google diperlukan untuk Sync / Merge.",true);return;}
-    syncModal.style.display="flex";syncSourceSelect.innerHTML="";syncVersionStatus.textContent="Loading shared diagrams…";syncChangesList.innerHTML='<p class="syncEmpty">Loading…</p>';
-    const publications=(await listAvailablePublications()).filter(item=>item.ownerId!==currentUser.uid);
-    if(!publications.length){const option=document.createElement("option");option.value="";option.textContent="No shared diagrams available";syncSourceSelect.appendChild(option);syncVersionStatus.textContent="Belum ada diagram yang dibagikan kepada akun ini.";syncChangesList.innerHTML='<p class="syncEmpty">No changes available.</p>';return;}
-    publications.forEach(item=>{const option=document.createElement("option");option.value=item.id;option.textContent=`${item.ownerName||item.ownerEmail||item.ownerId} · ${item.name||"Diagram"} · v${item.latestVersion||0}`;syncSourceSelect.appendChild(option);});
-    await reviewSelectedPublication();
+    syncModal.style.display="flex";syncSourceSelect.value="";loadedSyncState=null;loadedSyncChanges=[];syncVersionStatus.textContent="Loading published metadata…";syncChangesList.innerHTML='<p class="syncEmpty">Full diagram data is loaded only after you choose an action.</p>';publishedDiagramList.innerHTML='<p class="syncEmpty">Loading…</p>';document.getElementById("btnSyncSelected").hidden=true;
+    availablePublications=await listAvailablePublications();renderPublishedDiagramList();syncVersionStatus.textContent=availablePublications.some(item=>item.ownerUid!==currentUser.uid)?"Choose a published source.":"Belum ada diagram publik dari pengguna lain.";syncSourceSearch.focus();
 }
 
 async function handleAuthenticatedUser(user,generation){
@@ -711,15 +704,18 @@ syncButton.addEventListener("click",()=>{void openSyncModal().catch(error=>bridg
 document.getElementById("btnCloseSharePublish").addEventListener("click",()=>{shareModal.style.display="none";shareButton.focus();});
 document.getElementById("btnCloseSyncMerge").addEventListener("click",()=>{syncModal.style.display="none";syncButton.focus();});
 document.getElementById("btnConfirmSharePublish").addEventListener("click",async event=>{const button=event.currentTarget;button.disabled=true;shareStatus.textContent="Publishing changes…";try{await publishDiagram();}catch(error){shareStatus.textContent=`⚠ ${getCloudErrorMessage(error)}`;bridge.showFeedback(getCloudErrorMessage(error),true);}finally{button.disabled=false;}});
-syncSourceSelect.addEventListener("change",()=>{void reviewSelectedPublication().catch(error=>bridge.showFeedback(getCloudErrorMessage(error),true));});
-document.getElementById("btnRefreshSync").addEventListener("click",()=>{void reviewSelectedPublication().catch(error=>bridge.showFeedback(getCloudErrorMessage(error),true));});
+document.getElementById("btnUnpublish").addEventListener("click",async event=>{if(!confirm("Unpublish diagram ini? Data privat Anda tidak akan dihapus."))return;const button=event.currentTarget;button.disabled=true;try{await unpublishDiagram();}catch(error){bridge.showFeedback(getCloudErrorMessage(error),true);}finally{button.disabled=false;}});
+syncSourceSearch.addEventListener("input",renderPublishedDiagramList);
+document.getElementById("btnRefreshSync").addEventListener("click",()=>{void openSyncModal().catch(error=>bridge.showFeedback(getCloudErrorMessage(error),true));});
 document.getElementById("syncSelectAll").addEventListener("change",event=>{syncChangesList.querySelectorAll(".syncApply").forEach(input=>{if(!input.closest(".conflict"))input.checked=event.currentTarget.checked;});});
 document.getElementById("btnSyncSelected").addEventListener("click",async event=>{const button=event.currentTarget;button.disabled=true;try{await syncReviewedChanges();}catch(error){bridge.showFeedback(getCloudErrorMessage(error),true);}finally{button.disabled=false;}});
-document.getElementById("btnSyncAll").addEventListener("click",async event=>{if(!confirm("Sync all shared changes? Conflict fields will use the shared version."))return;const button=event.currentTarget;button.disabled=true;try{await syncReviewedChanges({all:true});}catch(error){bridge.showFeedback(getCloudErrorMessage(error),true);}finally{button.disabled=false;}});
+document.getElementById("btnReviewChanges").addEventListener("click",async event=>{const button=event.currentTarget;if(!syncSourceSelect.value){bridge.showFeedback("Pilih published diagram terlebih dahulu.",true);return;}button.disabled=true;try{await reviewSelectedPublication();}catch(error){bridge.showFeedback(getCloudErrorMessage(error),true);}finally{button.disabled=false;}});
+document.getElementById("btnSmartMerge").addEventListener("click",async event=>{const button=event.currentTarget;if(!syncSourceSelect.value){bridge.showFeedback("Pilih published diagram terlebih dahulu.",true);return;}button.disabled=true;try{await reviewSelectedPublication();await syncReviewedChanges({smart:true});}catch(error){bridge.showFeedback(getCloudErrorMessage(error),true);}finally{button.disabled=false;}});
+document.getElementById("btnReplaceDiagram").addEventListener("click",async event=>{if(!syncSourceSelect.value){bridge.showFeedback("Pilih published diagram terlebih dahulu.",true);return;}if(!confirm("Replace Entire Diagram akan mengganti semua device, connection, annotation, dan settings saat ini. Lanjutkan?"))return;const button=event.currentTarget;button.disabled=true;try{await replaceWithPublishedDiagram();}catch(error){bridge.showFeedback(getCloudErrorMessage(error),true);}finally{button.disabled=false;}});
 document.addEventListener("keydown",event=>{if(event.key!=="Escape")return;if(shareModal.style.display==="flex"){shareModal.style.display="none";shareButton.focus();}if(syncModal.style.display==="flex"){syncModal.style.display="none";syncButton.focus();}});
 
 async function initializeFirebase(){
-    if(!bridge)throw new Error("Diagram cloud bridge tidak tersedia.");
+    if(!bridge||!syncEngine)throw new Error("Diagram cloud/sync engine tidak tersedia.");
     const firebaseApp=initializeApp(firebaseConfig);
     auth=getAuth(firebaseApp);db=getFirestore(firebaseApp);provider=new GoogleAuthProvider();auth.useDeviceLanguage();
     try{await setPersistence(auth,browserLocalPersistence);}catch(error){console.warn("Firebase Auth persistence unavailable",error);}
