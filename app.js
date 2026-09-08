@@ -14,6 +14,11 @@ const annotationsLayer = document.getElementById("annotations");
 const statusSummaryLayer = document.getElementById("statusSummary");
 
 const SVGNS = "http://www.w3.org/2000/svg";
+const ViewportEngine=window.HotelViewportEngine;
+if(!ViewportEngine)throw new Error("Viewport engine is unavailable");
+const {InteractionState}=ViewportEngine;
+const viewportState={panX:0,panY:0,zoom:1};
+let interactionState=InteractionState.IDLE;
 
 let selectedNode = null;
 let dragging = null;
@@ -39,20 +44,12 @@ let linkMode=false;
 let firstLinkNode=null;
 
 let contextTarget=null;
-let panMode=false;
-let panPointerId=null;
 let spacePressed=false;
 const touchPoints=new Map();
 let pinchState=null;
 let readOnlyMode=false;
-
-let panStartX=0;
-
-let panStartY=0;
-
-let viewX=0;
-
-let viewY=0;
+let panGesture=null;
+let suppressCanvasClickUntil=0;
 const NODE_WIDTH = 90;
 const NODE_HEIGHT = 90;
 const MIN_NODE_WIDTH = 50;
@@ -825,7 +822,7 @@ function updateLayoutTools(){
         gridLayer.classList.toggle("hidden",!gridEnabled);
         gridLayer.setAttribute(
             "transform",
-            `translate(${viewX},${viewY}) scale(${zoom})`
+            `translate(${viewportState.panX},${viewportState.panY}) scale(${viewportState.zoom})`
         );
 
     }
@@ -837,23 +834,21 @@ function updateLayoutTools(){
 
 function resetView(){
 
-    zoom=1;
-    viewX=0;
-    viewY=0;
+    viewportState.zoom=1;
+    viewportState.panX=0;
+    viewportState.panY=0;
     updateView();
-    saveToLocalStorage();
+    saveViewportState();
 
 }
 
-function fitView(){
+function fitView({announce=true}={}){
     const bounds=getDiagramBounds(),metrics=getFitViewportMetrics();
     if(!metrics.width||!metrics.height)return;
-    const padding=Math.max(34,Math.min(80,Math.min(metrics.width,metrics.height)*.1));
-    const usableWidth=Math.max(1,metrics.width-padding*2),usableHeight=Math.max(1,metrics.height-padding*2);
-    zoom=Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,Math.min(usableWidth/bounds.width,usableHeight/bounds.height)));
-    viewX=metrics.left+metrics.width/2-(bounds.x+bounds.width/2)*zoom;
-    viewY=metrics.top+metrics.height/2-(bounds.y+bounds.height/2)*zoom;
-    updateView();saveToLocalStorage();showFeedback(`Diagram fitted to view (${Math.round(zoom*100)}%)`);
+    const fitted=ViewportEngine.fitViewport(bounds,metrics,{minZoom:MIN_ZOOM,maxZoom:MAX_ZOOM,paddingRatio:.12,minPadding:40,maxPadding:96});
+    viewportState.zoom=fitted.zoom;viewportState.panX=fitted.panX;viewportState.panY=fitted.panY;
+    updateView();saveViewportState();
+    if(announce)showFeedback(`Diagram fitted to view (${Math.round(viewportState.zoom*100)}%)`);
 }
 
 function getFitViewportMetrics(){
@@ -997,7 +992,7 @@ function drawAnnotation(annotation){
         group.appendChild(text);
     }
     group.addEventListener("pointerdown",startAnnotationDrag);
-    group.addEventListener("click",event=>{event.stopPropagation();selectedNode=null;selectedLink=null;selectedAnnotation=annotation;drawLinksOnly();showAnnotationProperties(annotation);group.classList.add("selectedAnnotation");});
+    group.addEventListener("click",event=>{event.stopPropagation();if(Date.now()<suppressCanvasClickUntil)return;selectedNode=null;selectedLink=null;selectedAnnotation=annotation;drawLinksOnly();showAnnotationProperties(annotation);group.classList.add("selectedAnnotation");});
     group.addEventListener("dblclick",event=>{event.stopPropagation();if(readOnlyMode||annotation.type!=="text")return;const value=prompt("Edit text",annotation.text);if(value===null||!value.trim())return;recordHistory();annotation.text=value.trim().slice(0,500);render();showAnnotationProperties(annotation);saveToLocalStorage();});
     annotationsLayer.appendChild(group);
 }
@@ -1005,10 +1000,12 @@ function drawAnnotation(annotation){
 function startAnnotationDrag(event){
     if(readOnlyMode)return;
     if(event.pointerType==="mouse"&&event.button!==0)return;
+    if(interactionState!==InteractionState.IDLE)return;
     event.preventDefault();event.stopPropagation();
     const annotation=annotations.find(item=>item.id===event.currentTarget.dataset.annotationId);if(!annotation)return;
     selectedAnnotation=annotation;selectedNode=null;selectedLink=null;document.getElementById("propertyPanel").hidden=true;
     const point=getViewportPoint(event);annotationDrag={annotation,pointerId:event.pointerId,offsetX:point.x-annotation.x,offsetY:point.y-annotation.y,startX:annotation.x,startY:annotation.y,element:event.currentTarget};
+    setInteractionState(InteractionState.DRAGGING_ANNOTATION);
     annotationsLayer.querySelectorAll(".selectedAnnotation").forEach(item=>item.classList.remove("selectedAnnotation"));event.currentTarget.classList.add("selectedAnnotation");event.currentTarget.setPointerCapture?.(event.pointerId);
 }
 
@@ -1022,6 +1019,7 @@ function moveAnnotation(event){
 function stopAnnotationDrag(event){
     if(!annotationDrag||event.pointerId!==annotationDrag.pointerId)return;
     const drag=annotationDrag;annotationDrag=null;
+    if(interactionState===InteractionState.DRAGGING_ANNOTATION)setInteractionState(InteractionState.IDLE);
     if(drag.startX!==drag.annotation.x||drag.startY!==drag.annotation.y){const end={x:drag.annotation.x,y:drag.annotation.y};drag.annotation.x=drag.startX;drag.annotation.y=drag.startY;recordHistory();drag.annotation.x=end.x;drag.annotation.y=end.y;saveToLocalStorage();render();}
 }
 
@@ -1361,6 +1359,8 @@ if(node.type==="pabx"){
     g.addEventListener("pointerdown",startDrag);
 
     g.addEventListener("click",function(e){
+
+    if(Date.now()<suppressCanvasClickUntil)return;
 
     if(didDrag){ didDrag=false; return; }
 
@@ -1711,6 +1711,8 @@ function drawLinks(){
 
             e.stopPropagation();
 
+            if(Date.now()<suppressCanvasClickUntil)return;
+
             selectLinkById(this.dataset.linkId);
 
         });
@@ -1765,18 +1767,21 @@ function drawWaypointHandles(link){
         handle.setAttribute("cx",point.x);handle.setAttribute("cy",point.y);handle.setAttribute("r",6);
         handle.dataset.linkId=link.id;handle.dataset.waypointIndex=index;
         handle.addEventListener("pointerdown",startWaypointDrag);
-        handle.addEventListener("click",e=>{e.stopPropagation();selectedWaypointIndex=index;drawLinksOnly();});
+        handle.addEventListener("click",e=>{e.stopPropagation();if(Date.now()<suppressCanvasClickUntil)return;selectedWaypointIndex=index;drawLinksOnly();});
         linksLayer.appendChild(handle);
     });
 }
 
 function startWaypointDrag(e){
     if(readOnlyMode)return;
+    if(e.pointerType==="mouse"&&e.button!==0)return;
+    if(interactionState!==InteractionState.IDLE)return;
     e.preventDefault();e.stopPropagation();
     const link=links.find(item=>item.id===e.currentTarget.dataset.linkId);
     if(!link) return;
     selectedLink=link;selectedWaypointIndex=Number(e.currentTarget.dataset.waypointIndex);
     waypointDrag={link,index:selectedWaypointIndex,pointerId:e.pointerId,startRoute:link.route.map(point=>({...point}))};
+    setInteractionState(InteractionState.DRAGGING_WAYPOINT);
     e.currentTarget.setPointerCapture?.(e.pointerId);
 }
 
@@ -1797,7 +1802,9 @@ function stopWaypointDrag(e){
         link.route=startRoute.map(point=>({...point}));recordHistory();link.route=endRoute;
         saveToLocalStorage();
     }
-    waypointDrag=null;drawLinksOnly();
+    waypointDrag=null;
+    if(interactionState===InteractionState.DRAGGING_WAYPOINT)setInteractionState(InteractionState.IDLE);
+    drawLinksOnly();
 }
 
 function addWaypointAt(point){
@@ -2153,61 +2160,96 @@ function isValidMac(value){return /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(value);}
 /* ==========================================================
    DRAG ENGINE
 ========================================================== */
-function isCanvasTarget(target){return !target.closest?.(".node,.waypointHandle")&&!target.dataset?.linkId;}
+function isCanvasTarget(target){return !target.closest?.(".node,.waypointHandle,.annotation")&&!target.dataset?.linkId;}
+function setInteractionState(nextState){
+    interactionState=nextState;
+    svg.classList.toggle("isPanning",nextState===InteractionState.PANNING);
+    svg.classList.toggle("isPinching",nextState===InteractionState.PINCH_ZOOMING);
+    svg.classList.toggle("isDraggingDevice",nextState===InteractionState.DRAGGING_DEVICE);
+}
 function beginCanvasPan(e){
-    panMode=true;panPointerId=e.pointerId;panStartX=e.clientX-viewX;panStartY=e.clientY-viewY;
-    svg.setPointerCapture?.(e.pointerId);e.preventDefault();
+    setInteractionState(InteractionState.PANNING);
+    panGesture={
+        pointerId:e.pointerId,
+        startPoint:{x:e.clientX,y:e.clientY},
+        startViewport:{...viewportState},
+        moved:false
+    };
+    svg.setPointerCapture?.(e.pointerId);
+    e.preventDefault();
 }
 function cancelObjectGestureForPinch(){
-    if(dragging&&selectedNode&&dragStartPosition){selectedNode.x=dragStartPosition.x;selectedNode.y=dragStartPosition.y;dragging=null;draggingPointerId=null;dragStartPosition=null;render();}
-    if(waypointDrag){waypointDrag.link.route=waypointDrag.startRoute.map(point=>({...point}));waypointDrag=null;drawLinksOnly();}
+    let needsRender=false;
+    if(dragging&&selectedNode&&dragStartPosition){
+        selectedNode.x=dragStartPosition.x;selectedNode.y=dragStartPosition.y;
+        dragging=null;draggingPointerId=null;dragStartPosition=null;needsRender=true;
+    }
+    if(annotationDrag){
+        annotationDrag.annotation.x=annotationDrag.startX;annotationDrag.annotation.y=annotationDrag.startY;
+        annotationDrag=null;needsRender=true;
+    }
+    if(waypointDrag){waypointDrag.link.route=waypointDrag.startRoute.map(point=>({...point}));waypointDrag=null;needsRender=true;}
+    if(needsRender)render();
+}
+function beginPinchZoom(e){
+    cancelObjectGestureForPinch();
+    panGesture=null;
+    const points=[...touchPoints.values()].slice(0,2);
+    const center={x:(points[0].x+points[1].x)/2,y:(points[0].y+points[1].y)/2};
+    pinchState={
+        distance:Math.max(1,Math.hypot(points[1].x-points[0].x,points[1].y-points[0].y)),
+        startViewport:{...viewportState},
+        worldAnchor:ViewportEngine.screenToWorld(center,svg.getBoundingClientRect(),viewportState)
+    };
+    setInteractionState(InteractionState.PINCH_ZOOMING);
+    e.preventDefault();e.stopPropagation();
 }
 function startCanvasGesture(e){
     if(e.pointerType==="touch"){
         touchPoints.set(e.pointerId,{x:e.clientX,y:e.clientY});
-        if(touchPoints.size===2){
-            cancelObjectGestureForPinch();panMode=false;panPointerId=null;
-            const points=[...touchPoints.values()],center={x:(points[0].x+points[1].x)/2,y:(points[0].y+points[1].y)/2};
-            const rect=svg.getBoundingClientRect(),local={x:center.x-rect.left,y:center.y-rect.top};
-            pinchState={distance:Math.hypot(points[1].x-points[0].x,points[1].y-points[0].y),zoom,worldX:(local.x-viewX)/zoom,worldY:(local.y-viewY)/zoom};
-            e.preventDefault();e.stopPropagation();return;
-        }
+        if(touchPoints.size===2){beginPinchZoom(e);return;}
         if(touchPoints.size===1&&isCanvasTarget(e.target)){beginCanvasPan(e);e.stopPropagation();}
         return;
     }
-    if(isCanvasTarget(e.target)&&((e.button===1)||(e.button===0&&spacePressed))){beginCanvasPan(e);e.stopPropagation();}
+    if(interactionState!==InteractionState.IDLE)return;
+    if(e.button===1||(e.button===0&&spacePressed)){beginCanvasPan(e);e.stopPropagation();}
 }
 function moveCanvasGesture(e){
     if(e.pointerType==="touch"&&touchPoints.has(e.pointerId))touchPoints.set(e.pointerId,{x:e.clientX,y:e.clientY});
-    if(pinchState&&touchPoints.size>=2){
-        const points=[...touchPoints.values()].slice(0,2),distance=Math.hypot(points[1].x-points[0].x,points[1].y-points[0].y);
-        const center={x:(points[0].x+points[1].x)/2,y:(points[0].y+points[1].y)/2},rect=svg.getBoundingClientRect();
-        zoom=Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,pinchState.zoom*(distance/(pinchState.distance||1))));
-        viewX=center.x-rect.left-pinchState.worldX*zoom;viewY=center.y-rect.top-pinchState.worldY*zoom;updateView();
-        e.preventDefault();e.stopPropagation();return;
+    if(interactionState===InteractionState.PINCH_ZOOMING&&pinchState&&touchPoints.size>=2){
+        const points=[...touchPoints.values()].slice(0,2);
+        const distance=Math.max(1,Math.hypot(points[1].x-points[0].x,points[1].y-points[0].y));
+        const center={x:(points[0].x+points[1].x)/2,y:(points[0].y+points[1].y)/2};
+        const rect=svg.getBoundingClientRect();
+        viewportState.zoom=ViewportEngine.clampZoom(pinchState.startViewport.zoom*(distance/pinchState.distance),MIN_ZOOM,MAX_ZOOM);
+        viewportState.panX=center.x-rect.left-pinchState.worldAnchor.x*viewportState.zoom;
+        viewportState.panY=center.y-rect.top-pinchState.worldAnchor.y*viewportState.zoom;
+        updateView();e.preventDefault();e.stopPropagation();return;
     }
-    if(panMode&&e.pointerId===panPointerId){viewX=e.clientX-panStartX;viewY=e.clientY-panStartY;updateView();e.preventDefault();e.stopPropagation();}
+    if(interactionState===InteractionState.PANNING&&panGesture&&e.pointerId===panGesture.pointerId){
+        const next=ViewportEngine.panViewport(panGesture.startViewport,panGesture.startPoint,{x:e.clientX,y:e.clientY});
+        Object.assign(viewportState,next);
+        if(Math.hypot(e.clientX-panGesture.startPoint.x,e.clientY-panGesture.startPoint.y)>3)panGesture.moved=true;
+        updateView();e.preventDefault();e.stopPropagation();
+    }
 }
 function endCanvasGesture(e){
     if(touchPoints.has(e.pointerId))touchPoints.delete(e.pointerId);
-    if(pinchState&&touchPoints.size<2){pinchState=null;saveToLocalStorage();}
-    if(e.pointerId===panPointerId){panMode=false;panPointerId=null;saveToLocalStorage();}
+    if(interactionState===InteractionState.PINCH_ZOOMING&&pinchState&&touchPoints.size<2){
+        pinchState=null;setInteractionState(InteractionState.IDLE);suppressCanvasClickUntil=Date.now()+500;saveViewportState();return;
+    }
+    if(interactionState===InteractionState.PANNING&&panGesture&&e.pointerId===panGesture.pointerId){
+        if(panGesture.moved)suppressCanvasClickUntil=Date.now()+500;
+        panGesture=null;setInteractionState(InteractionState.IDLE);saveViewportState();
+    }
 }
 svg.addEventListener("pointerdown",startCanvasGesture,true);
 svg.addEventListener("pointermove",moveCanvasGesture,true);
+svg.addEventListener("auxclick",event=>{if(event.button===1)event.preventDefault();});
 window.addEventListener("pointerup",endCanvasGesture,true);
 window.addEventListener("pointercancel",endCanvasGesture,true);
 function getViewportPoint(e){
-
-    const pt=svg.createSVGPoint();
-
-    pt.x=e.clientX;
-    pt.y=e.clientY;
-
-    return pt.matrixTransform(
-        viewport.getScreenCTM().inverse()
-    );
-
+    return ViewportEngine.screenToWorld({x:e.clientX,y:e.clientY},svg.getBoundingClientRect(),viewportState);
 }
 
 function startDrag(e){
@@ -2215,6 +2257,8 @@ function startDrag(e){
     if(e.pointerType==="mouse" && e.button!==0) return;
 
     if(readOnlyMode)return;
+
+    if(interactionState!==InteractionState.IDLE)return;
 
     e.preventDefault();
 
@@ -2241,6 +2285,7 @@ function startDrag(e){
         y:selectedNode.y
     };
     didDrag=false;
+    setInteractionState(InteractionState.DRAGGING_DEVICE);
 
 }
 svg.addEventListener("contextmenu",function(e){
@@ -2252,18 +2297,6 @@ svg.addEventListener("pointermove",function(e){
     if(annotationDrag){moveAnnotation(e);return;}
 
     if(moveWaypoint(e)) return;
-
-    if(panMode){
-
-    viewX=e.clientX-panStartX;
-
-    viewY=e.clientY-panStartY;
-
-    updateView();
-
-    return;
-
-}
 
 if(!dragging || e.pointerId!==draggingPointerId) return;
 
@@ -2288,16 +2321,10 @@ if(!dragging || e.pointerId!==draggingPointerId) return;
 });
 
 function stopDrag(e){
-
-    const wasPanning=panMode;
-    panMode=false;
-
     if(e && draggingPointerId!==null && e.pointerId!==draggingPointerId) return;
 
-    if(dragging && dragging.releasePointerCapture && e){
-
+    if(dragging && dragging.releasePointerCapture && e&&dragging.hasPointerCapture?.(e.pointerId)){
         dragging.releasePointerCapture(e.pointerId);
-
     }
 
     if(dragging && selectedNode && dragStartPosition &&
@@ -2319,8 +2346,8 @@ function stopDrag(e){
     dragging=null;
     draggingPointerId=null;
     dragStartPosition=null;
+    if(interactionState===InteractionState.DRAGGING_DEVICE)setInteractionState(InteractionState.IDLE);
     updateHistoryButtons();
-    if(wasPanning) saveToLocalStorage();
 
 }
 
@@ -2388,12 +2415,11 @@ function drawLinksOnly(){
    ZOOM ENGINE
 ========================================================== */
 
-let zoom = 1;
 function updateView(){
 
     viewport.setAttribute(
         "transform",
-        `translate(${viewX},${viewY}) scale(${zoom})`
+        `translate(${viewportState.panX},${viewportState.panY}) scale(${viewportState.zoom})`
     );
 
     updateLayoutTools();
@@ -2401,25 +2427,14 @@ function updateView(){
 }
 
 
-document.addEventListener("wheel",function(e){
-
-    if(!e.ctrlKey || !svg.contains(e.target)) return;
-
+svg.addEventListener("wheel",function(e){
     e.preventDefault();
-
-    const rect=svg.getBoundingClientRect();
-    const px=e.clientX-rect.left;
-    const py=e.clientY-rect.top;
-    const worldX=(px-viewX)/zoom;
-    const worldY=(py-viewY)/zoom;
-    const next=Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,zoom*(e.deltaY<0?1.1:1/1.1)));
-    zoom=next;
-    viewX=px-worldX*zoom;
-    viewY=py-worldY*zoom;
-
+    const delta=Math.max(-160,Math.min(160,e.deltaY));
+    const nextZoom=viewportState.zoom*Math.exp(-delta*.0018);
+    Object.assign(viewportState,ViewportEngine.zoomViewportAt(viewportState,nextZoom,{x:e.clientX,y:e.clientY},svg.getBoundingClientRect(),MIN_ZOOM,MAX_ZOOM));
     updateView();
     clearTimeout(updateView.persistTimer);
-    updateView.persistTimer=setTimeout(saveToLocalStorage,150);
+    updateView.persistTimer=setTimeout(saveViewportState,180);
 
 },{passive:false});
 
@@ -2467,10 +2482,7 @@ function createLayoutData(){
 
         statusSummaryTypes:[...statusSummaryTypes],
 
-        zoom:zoom,
-        viewX:viewX,
-        viewY:viewY
-        ,diagramName:diagramName
+        diagramName:diagramName
         ,theme:theme
         ,gridEnabled:gridEnabled
         ,snapEnabled:snapEnabled
@@ -2485,6 +2497,7 @@ function createLayoutData(){
 
 const LOCAL_STORAGE_KEY="hotelNetworkDiagram.latest";
 const USER_LOCAL_STORAGE_PREFIX=`${LOCAL_STORAGE_KEY}.user`;
+const VIEW_STORAGE_SUFFIX=".viewport";
 const LEGACY_CACHE_OWNER_KEY=`${LOCAL_STORAGE_KEY}.legacyOwner`;
 const SHARED_DIAGRAM_REPOSITORY="Maleosan/hotel-network-diagram";
 const SHARED_DIAGRAM_BRANCH="main";
@@ -2499,6 +2512,25 @@ function getUserLocalStorageKey(uid){
 
 function setLocalStorageUser(uid){
     activeLocalStorageKey=uid?getUserLocalStorageKey(uid):LOCAL_STORAGE_KEY;
+}
+
+function getViewportStorageKey(){return `${activeLocalStorageKey}${VIEW_STORAGE_SUFFIX}`;}
+
+function saveViewportState(){
+    try{
+        localStorage.setItem(getViewportStorageKey(),JSON.stringify(ViewportEngine.normalizeViewport(viewportState,MIN_ZOOM,MAX_ZOOM)));
+    }catch(error){console.warn("Unable to save viewport state",error);}
+}
+
+function loadViewportState(){
+    try{
+        const saved=localStorage.getItem(getViewportStorageKey());
+        if(!saved)return false;
+        const parsed=JSON.parse(saved);
+        if(!parsed||!Number.isFinite(Number(parsed.panX))||!Number.isFinite(Number(parsed.panY))||!Number.isFinite(Number(parsed.zoom)))return false;
+        Object.assign(viewportState,ViewportEngine.normalizeViewport(parsed,MIN_ZOOM,MAX_ZOOM));
+        return true;
+    }catch(error){console.warn("Unable to load viewport state",error);return false;}
 }
 
 function normalizeSharedDiagramPath(path){
@@ -2579,6 +2611,7 @@ async function updateLayoutFromGitHub(path=sharedDiagramPath){
     render();
     updateView();
     saveToLocalStorage();
+    saveViewportState();
 }
 
 function saveToLocalStorage(options={}){
@@ -2612,6 +2645,7 @@ function loadFromLocalStorage(){
         if(saved){
 
             loadLayout(saved);
+            loadViewportState();
             return true;
 
         }
@@ -2629,6 +2663,7 @@ function loadFromLocalStorage(){
 function resetToDefaultDiagram(){
 
     localStorage.removeItem(activeLocalStorageKey);
+    localStorage.removeItem(getViewportStorageKey());
 
     loadLayout(JSON.stringify({
         nodes:DEFAULT_NODES,
@@ -2645,6 +2680,7 @@ function resetToDefaultDiagram(){
     render();
     updateView();
     saveToLocalStorage();
+    saveViewportState();
 
 }
 
@@ -2688,6 +2724,7 @@ function loadLayout(data){
     const legacy=Array.isArray(parsed);
     const layout=legacy ? {nodes:parsed,links:[]} : parsed;
     if(!layout || !Array.isArray(layout.nodes)) throw new Error("Struktur JSON harus memiliki daftar nodes");
+    const hasLegacyViewport=Number.isFinite(Number(layout.zoom))&&Number.isFinite(Number(layout.viewX))&&Number.isFinite(Number(layout.viewY));
     const nextGlobalDeviceScale=clampGlobalDeviceScale(layout.globalDeviceScale);
     const nextDefaultDeviceNameColor=/^#[0-9a-f]{6}$/i.test(layout.defaultDeviceNameColor)?layout.defaultDeviceNameColor:null;
     const nextGlobalStatusTextSize=clampStatusTextSize(layout.globalStatusTextSize);
@@ -2750,9 +2787,9 @@ function loadLayout(data){
     });
     annotations.splice(0,annotations.length,...nextAnnotations);
     statusSummaryTypes=(Array.isArray(layout.statusSummaryTypes)?layout.statusSummaryTypes:[]).filter(type=>DEVICE_TYPES.has(type));
-    zoom=Number.isFinite(Number(layout.zoom))?Math.min(MAX_ZOOM,Math.max(MIN_ZOOM,Number(layout.zoom))):1;
-    viewX=Number.isFinite(Number(layout.viewX))?Number(layout.viewX):0;
-    viewY=Number.isFinite(Number(layout.viewY))?Number(layout.viewY):0;
+    viewportState.zoom=Number.isFinite(Number(layout.zoom))?ViewportEngine.clampZoom(Number(layout.zoom),MIN_ZOOM,MAX_ZOOM):1;
+    viewportState.panX=Number.isFinite(Number(layout.viewX))?Number(layout.viewX):0;
+    viewportState.panY=Number.isFinite(Number(layout.viewY))?Number(layout.viewY):0;
     diagramName=String(layout.diagramName||"HOTEL NETWORK DIAGRAM").slice(0,80);
     theme=layout.theme==="light"?"light":"dark";
     gridEnabled=layout.gridEnabled!==false;
@@ -2772,6 +2809,8 @@ function loadLayout(data){
     undoHistory.splice(0,undoHistory.length);
     redoHistory.splice(0,redoHistory.length);
     updateHistoryButtons();
+
+    return{hasLegacyViewport};
 
 }
 
@@ -3141,6 +3180,7 @@ function renderStatusDeviceOptions(search=""){
     });
 }
 document.getElementById("canvasContainer").addEventListener("click",event=>{
+    if(Date.now()<suppressCanvasClickUntil)return;
     if(event.target.closest?.(".node,.waypointHandle,.annotation")||event.target.dataset?.linkId) return;
     if(pendingAnnotation&&!readOnlyMode){
         const point=getViewportPoint(event),position=getSnappedPosition(point.x,point.y);
@@ -3151,6 +3191,8 @@ document.getElementById("canvasContainer").addEventListener("click",event=>{
 
 window.hotelNetworkDiagramCloudBridge=Object.freeze({
     getDiagramData:()=>createLayoutData(),
+    getViewportState:()=>({...viewportState}),
+    getInteractionState:()=>interactionState,
     setStorageUser:uid=>setLocalStorageUser(uid),
     getUserLocalCache:uid=>{
         try{return localStorage.getItem(getUserLocalStorageKey(uid));}
@@ -3167,18 +3209,24 @@ window.hotelNetworkDiagramCloudBridge=Object.freeze({
     },
     loadDiagramData:(data,options={})=>{
         const checkpoint=options.checkpoint?cloneDiagramState():null;
-        loadLayout(data);
+        const layoutInfo=loadLayout(data);
+        const restoredViewport=loadViewportState();
         if(checkpoint){
             undoHistory.push(checkpoint);
             if(undoHistory.length>HISTORY_LIMIT)undoHistory.shift();
             redoHistory.splice(0,redoHistory.length);
             updateHistoryButtons();
         }
-        render();updateView();saveToLocalStorage({notifyCloud:false});
+        render();
+        if(!restoredViewport&&!layoutInfo.hasLegacyViewport)fitView({announce:false});
+        else updateView();
+        saveToLocalStorage({notifyCloud:false});saveViewportState();
     },
     loadDefaultDiagram:()=>{
-        loadLayout({nodes:DEFAULT_NODES,links:DEFAULT_LINKS,annotations:[],statusSummaryTypes:[],zoom:1,viewX:0,viewY:0,diagramName:"HOTEL NETWORK DIAGRAM",theme:"dark",gridEnabled:true,snapEnabled:true,background:{type:"theme",color:"#202020",data:"",fit:"cover",customized:false},globalDeviceScale:1,defaultDeviceNameColor:null,globalStatusTextSize:10});
-        render();updateView();saveToLocalStorage({notifyCloud:false});
+        loadLayout({nodes:DEFAULT_NODES,links:DEFAULT_LINKS,annotations:[],statusSummaryTypes:[],diagramName:"HOTEL NETWORK DIAGRAM",theme:"dark",gridEnabled:true,snapEnabled:true,background:{type:"theme",color:"#202020",data:"",fit:"cover",customized:false},globalDeviceScale:1,defaultDeviceNameColor:null,globalStatusTextSize:10});
+        const restoredViewport=loadViewportState();render();
+        if(!restoredViewport)fitView({announce:false});else updateView();
+        saveToLocalStorage({notifyCloud:false});saveViewportState();
     },
     showFeedback:(message,isError=false)=>showFeedback(message,isError)
 });
@@ -3576,6 +3624,7 @@ fileOpen.onchange=function(){
             render();
             updateView();
             saveToLocalStorage();
+            saveViewportState();
 
             document.getElementById("statusBar").textContent="Loaded "+file.name;
 
@@ -3643,7 +3692,7 @@ btnResetDefault.onclick=function(){
 btnNewDiagram.onclick=function(){
     if(!confirm("Create a new blank diagram? Unsaved local changes will be replaced."))return;
     recordHistory();loadLayout({nodes:[],links:[],annotations:[],statusSummaryTypes:[],zoom:1,viewX:0,viewY:0,diagramName:"NEW NETWORK DIAGRAM",theme,gridEnabled,snapEnabled,background:{type:"theme",color:"#202020",data:"",fit:"cover",customized:false},globalDeviceScale:1,defaultDeviceNameColor:null,globalStatusTextSize:10});
-    render();updateView();saveToLocalStorage();showFeedback("New blank diagram created",false);
+    render();updateView();saveToLocalStorage();saveViewportState();showFeedback("New blank diagram created",false);
 };
 btnGrid.onclick=function(){
 
@@ -3750,7 +3799,7 @@ btnCreateDevice.onclick=function(){
 function getNextDevicePosition(){
     const rect=svg.getBoundingClientRect();
     const defaultSize=getNodeDisplaySize({width:NODE_WIDTH,height:NODE_HEIGHT});
-    const center={x:(rect.width/2-viewX)/zoom-defaultSize.width/2,y:(rect.height/2-viewY)/zoom-defaultSize.height/2};
+    const center={x:(rect.width/2-viewportState.panX)/viewportState.zoom-defaultSize.width/2,y:(rect.height/2-viewportState.panY)/viewportState.zoom-defaultSize.height/2};
     for(let i=0;i<20;i++){
         const p=getSnappedPosition(center.x+(i%5)*40,center.y+Math.floor(i/5)*40);
         if(!nodes.some(n=>Math.abs(n.x-p.x)<30&&Math.abs(n.y-p.y)<30)) return p;
@@ -3779,7 +3828,7 @@ document.addEventListener("keydown",function(e){
 
     if(isEditingTarget(e.target)) return;
 
-    if(e.code==="Space"){spacePressed=true;e.preventDefault();svg.style.cursor="grab";return;}
+    if(e.code==="Space"){spacePressed=true;e.preventDefault();svg.classList.add("spacePanReady");return;}
 
     if(readOnlyMode&&(((e.ctrlKey||e.metaKey)&&["y","z"].includes(e.key.toLowerCase()))||e.key==="Delete")){e.preventDefault();showReadOnlyNotice();return;}
 
@@ -3817,7 +3866,7 @@ document.addEventListener("keydown",function(e){
     deleteNodeById(selectedNode.id);
 
 });
-document.addEventListener("keyup",function(e){if(e.code==="Space"){spacePressed=false;svg.style.cursor="";}});
+document.addEventListener("keyup",function(e){if(e.code==="Space"){spacePressed=false;svg.classList.remove("spacePanReady");}});
 document.addEventListener("click",function(){
 
     contextMenu.style.display="none";

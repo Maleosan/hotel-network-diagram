@@ -271,17 +271,15 @@ body.readMode #statusBar{color:#ffe082;}
 
     height:100%;
 
-    cursor:grab;
+    cursor:default;
 
     touch-action:none;
 
 }
 
-#diagram:active{
-
-    cursor:grabbing;
-
-}
+#diagram.spacePanReady{cursor:grab;}
+#diagram.isPanning,#diagram.isPinching{cursor:grabbing;}
+#diagram.isPanning *,#diagram.isPinching *{cursor:grabbing!important;}
 
 #gridLayer{
 
@@ -596,7 +594,7 @@ body.syncOperationBusy .syncProgressModal{pointer-events:auto;user-select:auto;}
 
 .node{
 
-    cursor:pointer;
+    cursor:move;
 
     touch-action:none;
 
