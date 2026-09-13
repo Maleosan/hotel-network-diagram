@@ -8,7 +8,7 @@
 
 <title>Hotel Network Diagram</title>
 
-<link rel="stylesheet" href="style.css?v=20260913-2">
+<link rel="stylesheet" href="style.css?v=20260913-3">
 
 </head>
 <body>
@@ -21,6 +21,12 @@
         <h1 id="authTitle">HOTEL NETWORK DIAGRAM</h1>
         <p>Sign in untuk mengakses dan menyimpan diagram Anda dengan aman.</p>
         <button id="btnGoogleSignIn" class="googleSignIn" type="button" disabled><span aria-hidden="true">G</span> Sign in with Google</button>
+        <button id="btnGuestSignIn" class="localModeButton" type="button">Continue as Guest</button>
+        <div id="guestPublishedPicker" class="guestPublishedPicker" hidden>
+            <label for="guestPublishedSelect">Published diagram</label>
+            <select id="guestPublishedSelect"><option value="">Loading published diagrams…</option></select>
+            <button id="btnOpenGuestDiagram" type="button" disabled>Open Read-Only</button>
+        </div>
         <button id="btnContinueLocal" class="localModeButton" type="button" hidden>Continue in Local Mode</button>
         <p id="authMessage" class="authMessage" role="status" aria-live="polite">Menghubungkan ke Firebase...</p>
         <div id="authProgress" class="authProgress" hidden>
@@ -635,6 +641,7 @@
         <h2 id="statusCheckModalTitle">Check Device Status</h2>
         <label for="statusDeviceSearch">Search Device</label>
         <input id="statusDeviceSearch" type="search" placeholder="Camera, DVR, PC...">
+        <label class="statusSelectAll"><input id="statusSelectAll" type="checkbox"> ALL DEVICES</label>
         <div id="statusDeviceList"></div>
         <button id="btnApplyStatusCheck" type="button">Show Result</button>
         <button id="btnClearStatusCheck" type="button">Clear</button>
@@ -676,6 +683,7 @@
 </div>
 
 <script src="sync-engine.js?v=20260905-3"></script>
+<script src="status-engine.js?v=20260913-1"></script>
 <script src="sync-progress.js?v=20260913-1"></script>
 <script src="help.js?v=20260905-3"></script>
 <script src="viewport-engine.js?v=20260913-4"></script>
