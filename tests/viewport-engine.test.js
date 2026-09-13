@@ -20,7 +20,7 @@ test("2. repeated pan leaves serialized world positions unchanged",()=>{
     const diagram={nodes:[{id:"camera-1",x:12,y:34}],links:[{id:"link-1",from:"camera-1",to:"nvr-1"}]};
     const serialized=JSON.stringify(diagram);
     let view={panX:0,panY:0,zoom:1};
-    for(let index=0;index<20;index++)view=engine.panViewport(view,{x:0,y:0},{x:index,y:-index});
+    for(let index=0;index<100;index++)view=engine.panViewport(view,{x:0,y:0},{x:index,y:-index});
     assert.equal(JSON.stringify(diagram),serialized);
     assert.notEqual(view.panX,0);
 });
@@ -30,6 +30,14 @@ test("3. pointer-centered zoom preserves world coordinates",()=>{
     const view=engine.zoomViewportAt({panX:-40,panY:60,zoom:1},.25,{x:400,y:300},rect,.1,4);
     assert.deepEqual(device,before);
     assert.equal(view.zoom,.25);
+});
+
+test("3b. one hundred zoom operations never mutate world data",()=>{
+    const diagram={nodes:[{id:"dvr",x:550,y:210,portCount:16}],links:[{id:"link",from:"dvr",to:"camera"}]};
+    const before=JSON.stringify(diagram);
+    let view={panX:0,panY:0,zoom:1};
+    for(let index=0;index<100;index++)view=engine.zoomViewportAt(view,index%2?.75:1.25,{x:400,y:300},rect,.1,4);
+    assert.equal(JSON.stringify(diagram),before);
 });
 
 test("4. left drag converts screen movement into world movement",()=>{

@@ -16,6 +16,8 @@ const statusSummaryLayer = document.getElementById("statusSummary");
 const SVGNS = "http://www.w3.org/2000/svg";
 const ViewportEngine=window.HotelViewportEngine;
 if(!ViewportEngine)throw new Error("Viewport engine is unavailable");
+const PortEngine=window.HotelPortEngine;
+if(!PortEngine)throw new Error("Port engine is unavailable");
 const {InteractionState}=ViewportEngine;
 const viewportState={panX:0,panY:0,zoom:1};
 let interactionState=InteractionState.IDLE;
@@ -282,7 +284,7 @@ const DEFAULT_LINKS = [
 
 ];
 
-const nodes = DEFAULT_NODES.map(node=>({...node}));
+const nodes = DEFAULT_NODES.map(node=>PortEngine.normalizeDevice(node,DEFAULT_PORTS[node.type]||0));
 const DEFAULT_LINK_APPEARANCE = {
     color:"#cfcfcf",
     width:2,
@@ -307,6 +309,8 @@ function normalizeLink(link){
             to:link[1],
             sourcePort:null,
             targetPort:null,
+            sourcePortId:null,
+            targetPortId:null,
             label:"",
             routing:"straight",
             route:[],
@@ -321,6 +325,8 @@ function normalizeLink(link){
         to:link.to || link[1],
         sourcePort:Number.isInteger(Number(link.sourcePort)) ? Number(link.sourcePort) : null,
         targetPort:Number.isInteger(Number(link.targetPort)) ? Number(link.targetPort) : null,
+        sourcePortId:typeof link.sourcePortId==="string"?link.sourcePortId:null,
+        targetPortId:typeof link.targetPortId==="string"?link.targetPortId:null,
         label:typeof link.label==="string" ? link.label.slice(0,80) : "",
         routing:link.routing==="custom" ? "custom" : "straight",
         route:Array.isArray(link.route) ? link.route
@@ -898,11 +904,7 @@ function renderStatusSummary(){
 }
 
 function getPortCount(node){
-    const definition=node?getDeviceDefinition(node.type):null;
-    const modelCount=definition?.connectionUnit==="Channel"?getModelConnectionCount(definition,node.model):null;
-    if(Number.isInteger(modelCount)&&modelCount>=0) return modelCount;
-    const value=Number(node && node.portCount);
-    return Number.isInteger(value) && value>=0 ? value : (DEFAULT_PORTS[node?.type] || 0);
+    return PortEngine.inferPortCount(node,DEFAULT_PORTS[node?.type]||0);
 }
 
 function getModelConnectionCount(definition,model){
@@ -930,7 +932,13 @@ function escapeHtml(value){
 function isPortUsed(nodeId,port,exceptId){
     if(!port) return false;
     return links.some(link=>link.id!==exceptId &&
-        ((link.from===nodeId && link.sourcePort===port) || (link.to===nodeId && link.targetPort===port)));
+        ((link.from===nodeId && PortEngine.endpointNumber(link,nodeId)===port) || (link.to===nodeId && PortEngine.endpointNumber(link,nodeId)===port)));
+}
+
+function syncLinkPortIds(link){
+    link.sourcePortId=link.sourcePort?PortEngine.portId(link.sourcePort):null;
+    link.targetPortId=link.targetPort?PortEngine.portId(link.targetPort):null;
+    return link;
 }
 
 function firstFreePort(nodeId,exceptId){
@@ -1916,7 +1924,7 @@ if(linkMode){
 
         recordHistory();
 
-        const newLink=normalizeLink({from:firstLinkNode.id,to:selectedNode.id,sourcePort,targetPort});
+        const newLink=syncLinkPortIds(normalizeLink({from:firstLinkNode.id,to:selectedNode.id,sourcePort,targetPort}));
         links.push(newLink);
         selectedLink=newLink;
         }
@@ -2001,16 +2009,14 @@ function populatePropertyDeviceFields(node,typeOverride=null){
     const preserve=type===node.type;
     if(preserve&&node.model&&!definition.models.includes(node.model)){const legacy=document.createElement("option");legacy.value=node.model;legacy.textContent=node.model;modelSelect.appendChild(legacy);}
     modelSelect.value=preserve&&node.model&&[...modelSelect.options].some(option=>option.value===node.model)?node.model:definition.models[0];
-    populatePropertyPorts(node.portCount,definition,modelSelect.value);
+    populatePropertyPorts(preserve?getPortCount(node):null,definition,modelSelect.value);
     document.getElementById("statusProperties").hidden=!definition.status;
 }
 
 function populatePropertyPorts(current,definition,model){
-    const select=document.getElementById("propPortCount");select.innerHTML="";
-    const suggested=getModelConnectionCount(definition,model);
-    const values=definition.ports>0?[...new Set([suggested,definition.ports].filter(value=>value>0))]:[0];
-    values.forEach(value=>{const option=document.createElement("option");option.value=value;option.textContent=value;select.appendChild(option);});
-    select.value=values.includes(Number(current))?String(current):String(values[0]);
+    const input=document.getElementById("propPortCount"),enabled=definition.ports>0;
+    input.hidden=!enabled;document.getElementById("propPortCountLabel").hidden=!enabled;
+    input.value=String(enabled?(PortEngine.validCount(current,1)||getModelConnectionCount(definition,model)||definition.ports):0);
 }
 
 function renderConnectionStatus(node){
@@ -2022,7 +2028,7 @@ function renderConnectionStatus(node){
     if(count===0) return;
     document.getElementById("connectionStatusTitle").textContent=`Connection ${getConnectionUnit(node)}s`;
     for(let port=1;port<=count;port++){
-        const link=links.find(item=>(item.from===node.id&&item.sourcePort===port)||(item.to===node.id&&item.targetPort===port));
+        const link=links.find(item=>(item.from===node.id||item.to===node.id)&&PortEngine.endpointNumber(item,node.id)===port);
         const row=document.createElement(link?"button":"div");
         row.className=`connectionStatusRow ${link?"connected":"available"}`;
         const remoteId=link?(link.from===node.id?link.to:link.from):null;
@@ -2074,15 +2080,21 @@ document
     const mac=document.getElementById("propMAC").value.trim().toUpperCase().replace(/-/g,":");
     const nextType=propDeviceType.value;
     const nextModel=propModel.value;
-    const nextPortCount=Math.min(512,Math.max(0,Number(document.getElementById("propPortCount").value)||0));
+    const supportsPorts=getDeviceDefinition(nextType).ports>0;
+    const nextPortCount=supportsPorts?PortEngine.validCount(document.getElementById("propPortCount").value,1):0;
     const nextWidth=clampNodeWidth(document.getElementById("propDeviceWidth").value);
     const nextHeight=clampNodeHeight(document.getElementById("propDeviceHeight").value);
     const useGlobalStatusSize=document.getElementById("propStatusUseGlobalSize").checked;
     if(!name){ showFeedback("Nama device tidak boleh kosong",true); return; }
     if(ip && !isValidIP(ip)){ showFeedback("Format IP address tidak valid",true); return; }
     if(mac && !isValidMac(mac)){ showFeedback("Format MAC address tidak valid",true); return; }
-    if(links.some(link=>(link.from===selectedNode.id&&link.sourcePort>nextPortCount)||(link.to===selectedNode.id&&link.targetPort>nextPortCount))){
-        showFeedback("Jumlah port lebih kecil dari port yang sedang digunakan",true); return;
+    if(nextPortCount===null){showFeedback("Jumlah port/channel harus berupa angka bulat minimal 1 (maksimal 512)",true);return;}
+    const affectedLinks=PortEngine.affectedConnections(selectedNode.id,nextPortCount,links);
+    if(affectedLinks.length){
+        const affectedPorts=[...new Set(affectedLinks.map(link=>PortEngine.endpointNumber(link,selectedNode.id)))].sort((a,b)=>a-b);
+        const unit=getConnectionUnit(selectedNode);
+        const warning=`${unit} ${affectedPorts.join(", ")} masih memiliki connection.\nMengurangi jumlah ${unit.toLowerCase()} dapat memutus connection tersebut.\n\nOK: Reduce and remove affected connections\nCancel: Keep current configuration`;
+        if(!window.confirm(warning))return;
     }
     const nextState=cloneDiagramState();
     const nextNode=nextState.nodes.find(node=>node.id===selectedNode.id);
@@ -2100,6 +2112,7 @@ document
         nextNode.mac=mac;
         nextNode.model=nextModel;
         nextNode.portCount=nextPortCount;
+        nextNode.ports=PortEngine.normalizePorts(nextNode.ports,nextPortCount);
         nextNode.location=document.getElementById("propLocation").value;
         nextNode.notes=document.getElementById("propNotes").value;
         nextNode.status=document.getElementById("propStatus").value;
@@ -2133,6 +2146,13 @@ document
     selectedNode.model=nextModel;
 
     selectedNode.portCount=nextPortCount;
+    selectedNode.ports=PortEngine.normalizePorts(selectedNode.ports,nextPortCount);
+
+    if(affectedLinks.length){
+        const affectedIds=new Set(affectedLinks.map(link=>link.id));
+        for(let index=links.length-1;index>=0;index--)if(affectedIds.has(links[index].id))links.splice(index,1);
+        if(selectedLink&&affectedIds.has(selectedLink.id))selectedLink=null;
+    }
 
     selectedNode.location=
         document.getElementById("propLocation").value;
@@ -2464,6 +2484,7 @@ function createLayoutData(){
             ip:node.ip || "",
             model:node.model || "",
             portCount:getPortCount(node),
+            ports:PortEngine.normalizePorts(node.ports,getPortCount(node)),
             location:node.location || "",
             notes:node.notes || "",
             iconType:node.iconType==="custom"?"custom":"default",
@@ -2476,7 +2497,7 @@ function createLayoutData(){
 
         })),
 
-        links:links.map(cloneLink),
+        links:links.map(link=>syncLinkPortIds(cloneLink(link))),
 
         annotations:annotations.map(annotation=>({...annotation})),
 
@@ -2741,8 +2762,9 @@ function loadLayout(data){
         ids.add(id);
         const statusTextSize=clampStatusTextSize(n.statusTextSize);
         const statusTextUseGlobal=typeof n.statusTextUseGlobal==="boolean"?n.statusTextUseGlobal:(!Number.isFinite(Number(n.statusTextSize))||statusTextSize===nextGlobalStatusTextSize);
+        const normalizedPorts=PortEngine.normalizeDevice(n,DEFAULT_PORTS[type]||0);
         nextNodes.push({id,type,text:String(n.text||type.toUpperCase()).slice(0,80),labelSize:Math.min(48,Math.max(8,Number(n.labelSize)||13)),labelColor:/^#[0-9a-f]{6}$/i.test(n.labelColor)?n.labelColor:null,labelBold:Boolean(n.labelBold),width:clampNodeWidth(n.width),height:clampNodeHeight(n.height),statusTextSize,statusTextUseGlobal,statusTextColor:/^#[0-9a-f]{6}$/i.test(n.statusTextColor)?n.statusTextColor:null,statusTextBold:n.statusTextBold!==false,ip:String(n.ip||""),mac:String(n.mac||""),
-            model:String(n.model||""),portCount:Math.min(512,Math.max(0,Number.isInteger(Number(n.portCount))?Number(n.portCount):(DEFAULT_PORTS[type]||0))),
+            model:String(n.model||""),portCount:normalizedPorts.portCount,ports:normalizedPorts.ports,
             location:String(n.location||""),notes:String(n.notes||""),
             iconType:n.iconType==="custom"&&isSafeImageData(n.iconData)?"custom":"default",
             iconData:n.iconType==="custom"&&isSafeImageData(n.iconData)?n.iconData:"",
@@ -2769,8 +2791,9 @@ function loadLayout(data){
         appearance.opacity=Math.min(1,Math.max(.1,Number(appearance.opacity)||1));
         appearance.labelFollowsLine=appearance.labelFollowsLine!==false;
         const fromNode=nextNodes.find(n=>n.id===link.from), toNode=nextNodes.find(n=>n.id===link.to);
-        if(link.sourcePort<1||link.sourcePort>getPortCount(fromNode)||isPortUsedIn(nextLinks,link.from,link.sourcePort)) link.sourcePort=null;
-        if(link.targetPort<1||link.targetPort>getPortCount(toNode)||isPortUsedIn(nextLinks,link.to,link.targetPort)) link.targetPort=null;
+        Object.assign(link,PortEngine.normalizeConnectionPorts(link,new Map(nextNodes.map(node=>[node.id,node]))));
+        if(link.sourcePort&&isPortUsedIn(nextLinks,link.from,link.sourcePort)){link.sourcePort=null;link.sourcePortId=null;}
+        if(link.targetPort&&isPortUsedIn(nextLinks,link.to,link.targetPort)){link.targetPort=null;link.targetPortId=null;}
         nextLinks.push(link);
     });
 
@@ -3047,10 +3070,7 @@ function syncModelPortOptions(){
     const option=deviceModel.selectedOptions[0];
     if(!option) return;
     const ports=Number(option.dataset.ports);
-    devicePortCount.innerHTML="";
-    const portOption=document.createElement("option");
-    portOption.value=ports; portOption.textContent=ports;
-    devicePortCount.appendChild(portOption);
+    devicePortCount.value=String(ports);
     if(typeof deviceIconMode!=="undefined"&&deviceIconMode.value==="default")setDefaultIconPreview(deviceIconPreview,{type:deviceType.value,model:deviceModel.value});
 }
 function populateDeviceLibrary(){
@@ -3073,11 +3093,12 @@ function createDevice(type,options={},position=getNextDevicePosition()){
     const definition=getDeviceDefinition(type);
     const model=options.model&&definition.models.includes(options.model)?options.model:definition.models[0];
     const count=nodes.filter(node=>node.type===type).length+1;
-    const capacity=definition.ports>0?(Number(options.portCount)||getModelConnectionCount(definition,model)):0;
+    const requested=PortEngine.validCount(options.portCount,1);
+    const capacity=definition.ports>0?(requested||getModelConnectionCount(definition,model)):0;
     return{
         id:uniqueId(type),type,
         text:options.text||`${definition.label.toUpperCase()}-${String(count).padStart(3,"0")}`,
-        ip:"",model,portCount:capacity,location:"",notes:"",labelSize:13,labelColor:null,labelBold:false,width:NODE_WIDTH,height:NODE_HEIGHT,statusTextSize:globalStatusTextSize,statusTextUseGlobal:true,statusTextColor:null,statusTextBold:true,
+        ip:"",model,portCount:capacity,ports:PortEngine.normalizePorts([],capacity),location:"",notes:"",labelSize:13,labelColor:null,labelBold:false,width:NODE_WIDTH,height:NODE_HEIGHT,statusTextSize:globalStatusTextSize,statusTextUseGlobal:true,statusTextColor:null,statusTextBold:true,
         iconType:options.iconType==="custom"&&options.iconData?"custom":"default",
         iconData:options.iconType==="custom"?options.iconData||"":"",
         pictureData:"",status:"active",statusNote:"",
@@ -3482,7 +3503,7 @@ const propAnnotationCropZoom=document.getElementById("propAnnotationCropZoom");
 const propAnnotationCropX=document.getElementById("propAnnotationCropX");
 const propAnnotationCropY=document.getElementById("propAnnotationCropY");
 propDeviceType.addEventListener("change",function(){if(selectedNode){populatePropertyDeviceFields(selectedNode,this.value);if(selectedNode.iconType!=="custom")setDefaultIconPreview(document.getElementById("propIconPreview"),{...selectedNode,type:this.value,model:propModel.value});}});
-propModel.addEventListener("change",function(){if(selectedNode){populatePropertyPorts(null,getDeviceDefinition(propDeviceType.value),this.value);if(selectedNode.iconType!=="custom")setDefaultIconPreview(document.getElementById("propIconPreview"),{...selectedNode,type:propDeviceType.value,model:this.value});}});
+propModel.addEventListener("change",function(){if(selectedNode){populatePropertyPorts(document.getElementById("propPortCount").value,getDeviceDefinition(propDeviceType.value),this.value);if(selectedNode.iconType!=="custom")setDefaultIconPreview(document.getElementById("propIconPreview"),{...selectedNode,type:propDeviceType.value,model:this.value});}});
 document.getElementById("propNameThemeColor").addEventListener("change",function(){document.getElementById("propNameColor").disabled=this.checked;});
 document.getElementById("propStatusUseGlobalSize").addEventListener("change",function(){const input=document.getElementById("propStatusTextSize");input.disabled=this.checked;if(this.checked)input.value=globalStatusTextSize;});
 document.getElementById("propStatusUseDefaultColors").addEventListener("change",function(){document.getElementById("propStatusTextColor").disabled=this.checked;});
@@ -3561,7 +3582,7 @@ function updateSelectedLinkAppearance(){
     }
     recordHistory();
     selectedLink.label=propLinkLabel.value.trim().slice(0,80);
-    selectedLink.sourcePort=source; selectedLink.targetPort=target;
+    selectedLink.sourcePort=source; selectedLink.targetPort=target;syncLinkPortIds(selectedLink);
     selectedLink.appearance={...getLinkAppearance(selectedLink),labelFollowsLine:propLabelFollowsLine.checked};
     render(); saveToLocalStorage();
 }));
