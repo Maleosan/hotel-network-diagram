@@ -8,7 +8,7 @@
 
 <title>Hotel Network Diagram</title>
 
-<link rel="stylesheet" href="style.css?v=20260913-1">
+<link rel="stylesheet" href="style.css?v=20260913-2">
 
 </head>
 <body>
@@ -23,6 +23,30 @@
         <button id="btnGoogleSignIn" class="googleSignIn" type="button" disabled><span aria-hidden="true">G</span> Sign in with Google</button>
         <button id="btnContinueLocal" class="localModeButton" type="button" hidden>Continue in Local Mode</button>
         <p id="authMessage" class="authMessage" role="status" aria-live="polite">Menghubungkan ke Firebase...</p>
+        <div id="authProgress" class="authProgress" hidden>
+            <div class="authProgressTrack indeterminate" role="progressbar" aria-label="Sign in progress"><span></span></div>
+            <ol id="authProgressSteps" class="authProgressSteps"></ol>
+        </div>
+        <div id="authErrorActions" class="authErrorActions" hidden>
+            <button id="btnRetrySignIn" type="button">Retry</button>
+            <button id="btnCloseSignInError" type="button">Close</button>
+        </div>
+    </div>
+</div>
+
+<div id="publishProgressModal" class="modal syncProgressModal" role="dialog" aria-modal="true" aria-labelledby="publishProgressTitle">
+    <div class="modalContent syncProgressContent">
+        <h2 id="publishProgressTitle">PUBLISHING DIAGRAM</h2>
+        <div class="syncProgressHeading"><strong id="publishProgressStatus">Preparing…</strong><strong id="publishProgressPercent">0%</strong></div>
+        <div id="publishProgressTrack" class="syncProgressTrack" role="progressbar" aria-label="Publish progress" aria-valuemin="0" aria-valuemax="100"><span id="publishProgressBar"></span></div>
+        <p id="publishProgressDetail" class="syncProgressDetail" aria-live="polite"></p>
+        <ol id="publishProgressSteps" class="syncProgressSteps"></ol>
+        <div id="publishProgressSummary" class="syncProgressSummary" aria-live="polite"></div>
+        <div class="modalActions syncProgressActions">
+            <button id="btnCancelPublishProgress" type="button" hidden>Cancel</button>
+            <button id="btnRetryPublishProgress" type="button" hidden>Retry</button>
+            <button id="btnClosePublishProgress" type="button" hidden>Close</button>
+        </div>
     </div>
 </div>
 
@@ -652,12 +676,12 @@
 </div>
 
 <script src="sync-engine.js?v=20260905-3"></script>
-<script src="sync-progress.js?v=20260905-3"></script>
+<script src="sync-progress.js?v=20260913-1"></script>
 <script src="help.js?v=20260905-3"></script>
 <script src="viewport-engine.js?v=20260913-4"></script>
 <script src="port-engine.js?v=20260913-1"></script>
-<script src="app.js?v=20260913-4"></script>
-<script type="module" src="firebase.js?v=20260905-3"></script>
+<script src="app.js?v=20260913-5"></script>
+<script type="module" src="firebase.js?v=20260913-1"></script>
 </body>
 
 </html>

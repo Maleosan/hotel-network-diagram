@@ -763,7 +763,7 @@ function closeDeviceCamera(restoreFocus=true){
 function useCapturedDevicePhoto(){
     const target=cameraTargetNode,data=capturedDevicePhotoData;
     if(!target||!nodes.includes(target)||!isSafeImageData(data)){document.getElementById("cameraStatus").textContent="No captured photo is available.";return;}
-    recordHistory();target.pictureData=data;
+    recordHistory();target.pictureData=data;target.pictureId="";target.pictureHash="";
     if(capturedDevicePhotoInfo)devicePictureInfo.set(target.id,`Camera ${capturedDevicePhotoInfo.width}×${capturedDevicePhotoInfo.height} → ${formatByteSize(capturedDevicePhotoInfo.bytes)} (${capturedDevicePhotoInfo.mimeType==="image/webp"?"WebP":"JPEG"})`);
     if(selectedNode===target)updateNodeMediaPreviews();saveToLocalStorage();closeDeviceCamera();showFeedback("Camera photo compressed and added to the device.",false);
 }
@@ -2490,6 +2490,8 @@ function createLayoutData(){
             iconType:node.iconType==="custom"?"custom":"default",
             iconData:node.iconType==="custom"&&isSafeImageData(node.iconData)?node.iconData:"",
             pictureData:isSafeImageData(node.pictureData)?node.pictureData:"",
+            pictureId:typeof node.pictureId==="string"?node.pictureId:"",
+            pictureHash:typeof node.pictureHash==="string"?node.pictureHash:"",
             status:["active","inactive","problem"].includes(node.status)?node.status:"active",
             statusNote:String(node.statusNote||"").slice(0,160),
             x:node.x,
@@ -2769,6 +2771,8 @@ function loadLayout(data){
             iconType:n.iconType==="custom"&&isSafeImageData(n.iconData)?"custom":"default",
             iconData:n.iconType==="custom"&&isSafeImageData(n.iconData)?n.iconData:"",
             pictureData:isSafeImageData(n.pictureData)?n.pictureData:"",
+            pictureId:typeof n.pictureId==="string"?n.pictureId:"",
+            pictureHash:typeof n.pictureHash==="string"?n.pictureHash:"",
             status:["active","inactive","problem"].includes(n.status)?n.status:"active",
             statusNote:String(n.statusNote||"").slice(0,160),x,y});
     });
@@ -3248,6 +3252,11 @@ window.hotelNetworkDiagramCloudBridge=Object.freeze({
         const restoredViewport=loadViewportState();render();
         if(!restoredViewport)fitView({announce:false});else updateView();
         saveToLocalStorage({notifyCloud:false});saveViewportState();
+    },
+    applyCloudPicture:({nodeId,pictureId,pictureHash,pictureData})=>{
+        const node=nodes.find(item=>item.id===nodeId);
+        if(!node||node.pictureId!==pictureId||node.pictureHash!==pictureHash||node.pictureData||!isSafeImageData(pictureData))return false;
+        node.pictureData=pictureData;render();saveToLocalStorage({notifyCloud:false});return true;
     },
     showFeedback:(message,isError=false)=>showFeedback(message,isError)
 });
@@ -3768,13 +3777,13 @@ propPictureFile.addEventListener("change",async function(){
     const sizeInfo=document.getElementById("propPictureSizeInfo");sizeInfo.textContent=`Compressing ${formatByteSize(file.size)}…`;
     try{
         const result=await compressDevicePictureFile(file);if(!nodes.includes(target))return;
-        recordHistory();target.pictureData=result.data;devicePictureInfo.set(target.id,`Original ${formatByteSize(result.originalBytes)} → ${formatByteSize(result.bytes)} · ${result.width}×${result.height} · ${result.mimeType==="image/webp"?"WebP":"JPEG"}`);
+        recordHistory();target.pictureData=result.data;target.pictureId="";target.pictureHash="";devicePictureInfo.set(target.id,`Original ${formatByteSize(result.originalBytes)} → ${formatByteSize(result.bytes)} · ${result.width}×${result.height} · ${result.mimeType==="image/webp"?"WebP":"JPEG"}`);
         if(selectedNode===target)updateNodeMediaPreviews();saveToLocalStorage();showFeedback(`Device photo compressed: ${formatByteSize(result.originalBytes)} → ${formatByteSize(result.bytes)}.`,false);
     }
     catch(error){showFeedback(error.message,true);}
 });
 document.getElementById("btnRemovePicture").onclick=function(){
-    if(!selectedNode||!selectedNode.pictureData)return;recordHistory();devicePictureInfo.delete(selectedNode.id);selectedNode.pictureData="";updateNodeMediaPreviews();saveToLocalStorage();
+    if(!selectedNode||!selectedNode.pictureData)return;recordHistory();devicePictureInfo.delete(selectedNode.id);selectedNode.pictureData="";selectedNode.pictureId="";selectedNode.pictureHash="";updateNodeMediaPreviews();saveToLocalStorage();
 };
 document.getElementById("btnCapturePhoto").onclick=captureDevicePhoto;
 document.getElementById("btnRetakePhoto").onclick=retakeDevicePhoto;

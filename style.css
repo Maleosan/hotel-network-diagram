@@ -79,6 +79,7 @@ body{display:flex;flex-direction:column;}
 .googleSignIn:disabled{opacity:.55;cursor:wait;}
 .localModeButton{margin-top:10px;background:#39434b;color:#fff;}
 .authCard .authMessage{min-height:1.5em;margin:15px 0 0;color:#9eabb5;font-size:12px;}
+.authProgress{margin-top:14px;text-align:left}.authProgressTrack{height:8px;overflow:hidden;border-radius:999px;background:#39434b}.authProgressTrack span{display:block;width:35%;height:100%;border-radius:inherit;background:linear-gradient(90deg,#0077c8,#00d4ff);animation:syncProgressIndeterminate 1.1s ease-in-out infinite}.authProgressSteps{display:grid;gap:5px;margin:12px 0 0;padding:0;list-style:none;font-size:12px}.authProgressSteps li{color:#7f8d97}.authProgressSteps li.active{color:#f3f7fa;font-weight:700}.authProgressSteps li.done{color:#36c98f}.authErrorActions{display:flex;gap:8px;margin-top:14px}.authErrorActions button:first-child{background:#00aee6;color:#07141b}.authErrorActions button:last-child{background:#39434b;color:#fff}
 
 /* =======================================================
    TOP TOOLBAR
@@ -414,6 +415,7 @@ body.readMode #statusBar{color:#ffe082;}
 .syncProgressActions{justify-content:flex-end;}
 body.syncOperationBusy #toolbar,body.syncOperationBusy #workspace,body.syncOperationBusy #syncMergeModal{pointer-events:none;user-select:none;}
 body.syncOperationBusy .syncProgressModal{pointer-events:auto;user-select:auto;}
+body.publishOperationBusy #toolbar,body.publishOperationBusy #workspace,body.publishOperationBusy #sharePublishModal{pointer-events:none;user-select:none;}body.publishOperationBusy #publishProgressModal{pointer-events:auto;user-select:auto;}
 
 .helpModal{z-index:4500!important;}
 .modalContent.helpContent{width:min(94vw,720px);height:min(86dvh,720px);display:flex;flex-direction:column;overflow:hidden;padding:16px;}

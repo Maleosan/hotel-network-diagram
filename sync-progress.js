@@ -28,14 +28,15 @@
             elements.close.addEventListener("click",()=>this.close());
             elements.retry.addEventListener("click",()=>{const retry=this.retry;this.close();if(retry)void retry();});
         }
-        start({title="SYNCING",stages=[],retry=null}={}){
-            this.state=reduceProgress(this.state,{type:"start",title,status:"Preparing secure temporary state…"});this.stages=[...stages];this.retry=retry;this.cancelRequested=false;
+        start({title="SYNCING",stages=[],retry=null,allowCancel=true}={}){
+            this.state=reduceProgress(this.state,{type:"start",title,status:"Preparing secure temporary state…"});this.stages=[...stages];this.retry=retry;this.cancelRequested=false;this.allowCancel=allowCancel;
+            if(!allowCancel)this.state={...this.state,cancellable:false};
             this.elements.modal.style.display="flex";this.onBusyChange(true);this.render();
         }
         stage(index,{done=null,total=null,status="",detail="",cancellable=true}={}){
             const fraction=Number.isFinite(done)&&Number.isFinite(total)&&total>0?Math.min(1,done/total):0;
             const percent=this.stages.length?((index+fraction)/this.stages.length)*100:0;
-            this.state=reduceProgress(this.state,{type:cancellable?"update":"commit",percent,status,cancellable});
+            cancellable=Boolean(cancellable&&this.allowCancel!==false);this.state=reduceProgress(this.state,{type:cancellable?"update":"commit",percent,status,cancellable});
             this.activeStage=index;this.detail=detail||(Number.isFinite(done)&&Number.isFinite(total)?`${done} / ${total}`:"");this.render();
         }
         indeterminate(index,status,detail=""){
