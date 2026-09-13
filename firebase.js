@@ -54,6 +54,10 @@ const authGate=document.getElementById("authGate");
 const authMessage=document.getElementById("authMessage");
 const signInButton=document.getElementById("btnGoogleSignIn");
 const localModeButton=document.getElementById("btnContinueLocal");
+const guestButton=document.getElementById("btnGuestSignIn");
+const guestPicker=document.getElementById("guestPublishedPicker");
+const guestSelect=document.getElementById("guestPublishedSelect");
+const guestOpenButton=document.getElementById("btnOpenGuestDiagram");
 const accountPanel=document.getElementById("cloudAccount");
 const saveStatus=document.getElementById("cloudSaveStatus");
 const saveCloudButton=document.getElementById("btnSaveCloud");
@@ -113,6 +117,7 @@ let authGeneration=0;
 let syncOperationRunning=false;
 let signInRunning=false;
 let publishRunning=false;
+let guestSession=false;
 let startupStartedAt=performance.now();
 
 function logStartup(stage,startedAt=startupStartedAt){
@@ -180,7 +185,7 @@ function setUserDisplay(user){
 userPhoto.addEventListener("error",()=>{userPhoto.hidden=true;userInitial.hidden=false;});
 
 function showLogin(message="Sign in dengan akun Google untuk membuka diagram Anda."){
-    document.body.classList.remove("authenticated");document.getElementById("btnMenuToggle").hidden=true;closeToolbarMenu();authGate.hidden=false;accountPanel.hidden=true;signInButton.hidden=false;signInButton.disabled=false;localModeButton.hidden=true;authProgress.hidden=true;authErrorActions.hidden=true;authMessage.textContent=message;signInRunning=false;
+    guestSession=false;bridge.setGuestMode(false);document.body.classList.remove("authenticated");document.getElementById("btnMenuToggle").hidden=true;closeToolbarMenu();authGate.hidden=false;accountPanel.hidden=true;signInButton.hidden=false;signInButton.disabled=false;guestButton.hidden=false;guestPicker.hidden=true;localModeButton.hidden=true;authProgress.hidden=true;authErrorActions.hidden=true;authMessage.textContent=message;signInRunning=false;
 }
 
 function showAuthenticatedApp(user){
@@ -389,10 +394,11 @@ async function hydrateCloudPhotos(layout,user,generation){
     const pending=(Array.isArray(layout?.nodes)?layout.nodes:[]).filter(node=>node.pictureId&&node.pictureHash&&!node.pictureData);
     let completed=0;
     await runLimited(pending.map(node=>async()=>{
-        const result=await ensurePhotoDocument(user.uid,{id:node.pictureId,hash:node.pictureHash},{allowRepair:false});
-        if(!result.verified){photoLoadFailures++;return;}
+        const verified=readVerifiedPhotoSnapshot(await getDoc(getPhotoRef(user.uid,node.pictureId)),node.pictureHash);
+        if(!verified){photoLoadFailures++;return;}
         if(generation!==authGeneration||currentUser?.uid!==user.uid)return;
-        bridge.applyCloudPicture({nodeId:node.id,pictureId:node.pictureId,pictureHash:node.pictureHash,pictureData:`data:${result.verified.mimeType};base64,${result.verified.base64}`});
+        verifiedPhotoIds.add(node.pictureId);rememberVerifiedPhoto(user.uid,node.pictureId,node.pictureHash);
+        bridge.applyCloudPicture({nodeId:node.id,pictureId:node.pictureId,pictureHash:node.pictureHash,pictureData:`data:${verified.mimeType};base64,${verified.base64}`});
         completed++;
     }));
     if(photoLoadFailures)bridge.showFeedback(`${photoLoadFailures} foto cloud tidak dapat dimuat. Diagram lainnya tetap dapat digunakan.`,true);
@@ -776,8 +782,39 @@ async function openSyncModal(){
     availablePublications=await listAvailablePublications();renderPublishedDiagramList();syncVersionStatus.textContent=availablePublications.some(item=>item.ownerUid!==currentUser.uid)?"Choose a published source.":"Belum ada diagram publik dari pengguna lain.";syncSourceSearch.focus();
 }
 
+async function prepareGuestPicker(){
+    guestPicker.hidden=false;guestButton.disabled=true;authMessage.textContent="Loading published diagrams…";
+    try{
+        const publications=await listAvailablePublications();guestSelect.innerHTML='<option value="">Select a published diagram</option>';
+        publications.forEach(item=>{const option=document.createElement("option");option.value=item.id;option.textContent=`${item.diagramName||"Diagram"} — ${item.displayName||"Published user"} (v${item.publishedVersion||0})`;guestSelect.appendChild(option);});
+        authMessage.textContent=publications.length?"Guest mode is strictly read-only.":"No published diagrams are available.";
+    }catch(error){guestPicker.hidden=true;authMessage.textContent=getCloudErrorMessage(error);}
+    finally{guestButton.disabled=false;guestOpenButton.disabled=!guestSelect.value;}
+}
+
+async function openGuestDiagram(){
+    if(!guestSelect.value)return;guestOpenButton.disabled=true;authMessage.textContent="Opening published diagram…";
+    try{
+        const snapshot=await getDoc(getPublicationRef(guestSelect.value));
+        if(!snapshot.exists()||snapshot.data()?.published!==true)throw new Error("Published diagram tidak tersedia.");
+        const publication={id:snapshot.id,...snapshot.data()},layout=await loadPublishedLayout(publication),photoIds=new Set((layout.nodes||[]).map(node=>node.pictureId).filter(Boolean));
+        for(const photoId of photoIds){
+            const photoSnapshot=await getDoc(getPublishedPhotoRef(publication.id,photoId));
+            for(const node of layout.nodes.filter(item=>item.pictureId===photoId)){
+                const embedded=parseImageDataUrl(node.pictureData);
+                if(embedded&&hashString(embedded.base64)===node.pictureHash)continue;
+                const verified=readVerifiedPhotoSnapshot(photoSnapshot,node.pictureHash);if(verified)node.pictureData=`data:${verified.mimeType};base64,${verified.base64}`;
+            }
+        }
+        guestSession=true;currentUser=null;diagramReady=false;bridge.setStorageUser(`guest-${publication.id}`);bridge.loadDiagramData(layout);bridge.setGuestMode(true);
+        userName.textContent="Guest";userEmail.textContent=`Read-only · ${publication.diagramName||"Published diagram"}`;userInitial.textContent="G";userPhoto.hidden=true;accountPanel.hidden=false;saveStatus.textContent="Published view · read-only";logoutButton.textContent="Exit Guest";
+        document.body.classList.add("authenticated");document.getElementById("btnMenuToggle").hidden=false;authGate.hidden=true;
+    }catch(error){authMessage.textContent=getCloudErrorMessage(error);guestOpenButton.disabled=false;}
+}
+
 async function handleAuthenticatedUser(user,generation){
     const authStartedAt=performance.now();logStartup("User authenticated",authStartedAt);
+    guestSession=false;bridge.setGuestMode(false);logoutButton.textContent="Logout";
     currentUser=user;diagramReady=false;diagramExists=false;knownRevision=null;knownChunkCount=0;knownVersion=0;knownPhotoIds=new Set();verifiedPhotoIds=new Set();photoLoadFailures=0;lastSavedCloudData=null;
     bridge.setStorageUser(user.uid);setUserDisplay(user);setAuthProgress(2,"Loading your diagram...");signInButton.disabled=true;
     let cloudLoaded=false;
@@ -799,7 +836,7 @@ async function handleAuthState(user){
     if(user&&diagramReady&&currentUser?.uid===user.uid){setUserDisplay(user);showAuthenticatedApp(user);return;}
     const generation=++authGeneration;
     clearTimeout(saveTimer);saveTimer=null;saveQueued=false;diagramReady=false;
-    if(!user){currentUser=null;knownVersion=0;knownPhotoIds=new Set();verifiedPhotoIds=new Set();photoLoadFailures=0;lastSavedCloudData=null;bridge.setStorageUser(null);showLogin();return;}
+    if(!user){if(guestSession)return;currentUser=null;knownVersion=0;knownPhotoIds=new Set();verifiedPhotoIds=new Set();photoLoadFailures=0;lastSavedCloudData=null;bridge.setStorageUser(null);showLogin();return;}
     await handleAuthenticatedUser(user,generation);
 }
 
@@ -843,10 +880,14 @@ async function initializeFirebase(){
         catch(error){console.error("Google sign-in failed",error);signInRunning=false;signInButton.disabled=false;setAuthProgress(1,`❌ SIGN IN FAILED — ${getAuthErrorMessage(error)}`,{error:true});}
     };
     signInButton.addEventListener("click",()=>{void startSignIn();});
+    guestButton.addEventListener("click",()=>{void prepareGuestPicker();});
+    guestSelect.addEventListener("change",()=>{guestOpenButton.disabled=!guestSelect.value;});
+    guestOpenButton.addEventListener("click",()=>{void openGuestDiagram();});
     document.getElementById("btnRetrySignIn").addEventListener("click",()=>{authErrorActions.hidden=true;void startSignIn();});
     document.getElementById("btnCloseSignInError").addEventListener("click",()=>showLogin());
     logoutButton.addEventListener("click",async()=>{
         logoutButton.disabled=true;
+        if(guestSession){guestSession=false;logoutButton.textContent="Logout";bridge.setGuestMode(false);showLogin("Guest session ended.");logoutButton.disabled=false;return;}
         try{if(currentUser&&diagramReady)await saveNow();authGate.hidden=false;authMessage.textContent="Logout...";await signOut(auth);}
         catch(error){console.error("Logout failed",error);bridge.showFeedback("Logout gagal. Silakan coba kembali.",true);authGate.hidden=true;}
         finally{logoutButton.disabled=false;}

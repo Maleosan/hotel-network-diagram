@@ -18,6 +18,8 @@ const ViewportEngine=window.HotelViewportEngine;
 if(!ViewportEngine)throw new Error("Viewport engine is unavailable");
 const PortEngine=window.HotelPortEngine;
 if(!PortEngine)throw new Error("Port engine is unavailable");
+const StatusEngine=window.HotelStatusEngine;
+if(!StatusEngine)throw new Error("Status engine is unavailable");
 const {InteractionState}=ViewportEngine;
 const viewportState={panX:0,panY:0,zoom:1};
 let interactionState=InteractionState.IDLE;
@@ -38,6 +40,9 @@ let pendingAnnotation = null;
 let annotationDrag = null;
 let statusSummaryTypes=[];
 let statusCheckDraft=new Set();
+let statusSummaryDeviceIds=[];
+let statusSummaryPosition={x:16,y:16};
+let statusSummaryDrag=null;
 let linkEditHistoryRecorded = false;
 let selectedWaypointIndex = null;
 let waypointDrag = null;
@@ -50,6 +55,7 @@ let spacePressed=false;
 const touchPoints=new Map();
 let pinchState=null;
 let readOnlyMode=false;
+let guestMode=false;
 let panGesture=null;
 let suppressCanvasClickUntil=0;
 const NODE_WIDTH = 90;
@@ -415,6 +421,8 @@ function cloneDiagramState(){
 
         annotations:annotations.map(annotation=>({...annotation})),
         statusSummaryTypes:[...statusSummaryTypes],
+        statusSummaryDeviceIds:[...statusSummaryDeviceIds],
+        statusSummaryPosition:{...statusSummaryPosition},
         diagramName,
         background:{...diagramBackground},
         globalDeviceScale,
@@ -444,6 +452,8 @@ function restoreDiagramState(state,shouldPersist=true){
     });
     annotations.splice(0,annotations.length,...(state.annotations||[]).map(annotation=>({...annotation})));
     statusSummaryTypes=Array.isArray(state.statusSummaryTypes)?state.statusSummaryTypes.filter(type=>DEVICE_TYPES.has(type)):[];
+    statusSummaryDeviceIds=Array.isArray(state.statusSummaryDeviceIds)?state.statusSummaryDeviceIds.map(String):[];
+    statusSummaryPosition={x:Number(state.statusSummaryPosition?.x)||16,y:Number(state.statusSummaryPosition?.y)||16};
     diagramName=state.diagramName || diagramName;
     diagramBackground={...diagramBackground,...(state.background||{})};
     globalDeviceScale=clampGlobalDeviceScale(state.globalDeviceScale);
@@ -895,13 +905,23 @@ function getStatusSummaryLabel(type){
 
 function renderStatusSummary(){
     statusSummaryLayer.innerHTML="";
-    if(statusSummaryTypes.length===0)return;
-    const width=210,rowHeight=22,height=38+statusSummaryTypes.length*rowHeight,group=document.createElementNS(SVGNS,"g");group.classList.add("deviceStatusSummary");group.style.pointerEvents="none";
-    const background=document.createElementNS(SVGNS,"rect");background.classList.add("summaryBackground");background.setAttribute("x",16);background.setAttribute("y",16);background.setAttribute("width",width);background.setAttribute("height",height);background.setAttribute("rx",8);group.appendChild(background);
-    const title=document.createElementNS(SVGNS,"text");title.classList.add("summaryTitle");title.setAttribute("x",30);title.setAttribute("y",40);title.textContent="DEVICE STATUS";group.appendChild(title);
-    statusSummaryTypes.forEach((type,index)=>{const count=nodes.filter(node=>node.type===type).length,row=document.createElementNS(SVGNS,"text");row.classList.add("summaryRow");row.setAttribute("x",30);row.setAttribute("y",64+index*rowHeight);row.textContent=`${getStatusSummaryLabel(type)} = ${count}`;group.appendChild(row);});
+    const selectedIds=statusSummaryDeviceIds.length?statusSummaryDeviceIds:new Set(nodes.filter(node=>statusSummaryTypes.includes(node.type)).map(node=>String(node.id)));
+    const summary=StatusEngine.summarize(nodes,selectedIds);
+    if(summary.total===0)return;
+    const rows=["SUMMARY",`Total Device : ${summary.total}`,`Active : ${summary.active}`,`Non Active : ${summary.inactive}`,`Broken : ${summary.problem}`,"DETAIL",...Object.entries(summary.detail).map(([label,count])=>`${label} : ${count}`)];
+    const width=230,rowHeight=20,height=20+rows.length*rowHeight,group=document.createElementNS(SVGNS,"g");group.classList.add("deviceStatusSummary");group.setAttribute("transform",`translate(${statusSummaryPosition.x} ${statusSummaryPosition.y})`);
+    const background=document.createElementNS(SVGNS,"rect");background.classList.add("summaryBackground");background.setAttribute("width",width);background.setAttribute("height",height);background.setAttribute("rx",8);group.appendChild(background);
+    rows.forEach((value,index)=>{const row=document.createElementNS(SVGNS,"text");row.classList.add(index===0||value==="DETAIL"?"summaryTitle":"summaryRow");row.setAttribute("x",14);row.setAttribute("y",22+index*rowHeight);row.textContent=value;group.appendChild(row);});
+    const handle=document.createElementNS(SVGNS,"rect");handle.classList.add("summaryDragHandle");handle.setAttribute("width",width);handle.setAttribute("height",32);handle.setAttribute("rx",8);handle.setAttribute("aria-label","Drag status summary");handle.addEventListener("pointerdown",startStatusSummaryDrag);group.insertBefore(handle,group.firstChild);
     statusSummaryLayer.appendChild(group);
 }
+
+function startStatusSummaryDrag(event){
+    if(event.button!==0)return;event.preventDefault();event.stopPropagation();
+    statusSummaryDrag={pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,origin:{...statusSummaryPosition}};event.currentTarget.setPointerCapture?.(event.pointerId);
+}
+window.addEventListener("pointermove",event=>{if(!statusSummaryDrag||event.pointerId!==statusSummaryDrag.pointerId)return;statusSummaryPosition={x:Math.max(0,statusSummaryDrag.origin.x+event.clientX-statusSummaryDrag.startX),y:Math.max(0,statusSummaryDrag.origin.y+event.clientY-statusSummaryDrag.startY)};renderStatusSummary();event.preventDefault();event.stopPropagation();},true);
+window.addEventListener("pointerup",event=>{if(!statusSummaryDrag||event.pointerId!==statusSummaryDrag.pointerId)return;statusSummaryDrag=null;saveToLocalStorage();event.stopPropagation();},true);
 
 function getPortCount(node){
     return PortEngine.inferPortCount(node,DEFAULT_PORTS[node?.type]||0);
@@ -1399,9 +1419,6 @@ nodesLayer.appendChild(g);
 }
 
 function showNodeProperties(){
-
-    if(readOnlyMode){document.getElementById("propertyPanel").hidden=true;return;}
-
     document.getElementById("propertyPanel").hidden=false;
     document.getElementById("nodeProperties").style.display="";
     document.getElementById("linkProperties").style.display="none";
@@ -1410,9 +1427,6 @@ function showNodeProperties(){
 }
 
 function showLinkProperties(){
-
-    if(readOnlyMode){document.getElementById("propertyPanel").hidden=true;return;}
-
     document.getElementById("propertyPanel").hidden=false;
     document.getElementById("nodeProperties").style.display="none";
     document.getElementById("linkProperties").style.display="";
@@ -1421,7 +1435,6 @@ function showLinkProperties(){
 }
 
 function showAnnotationProperties(annotation){
-    if(readOnlyMode){document.getElementById("propertyPanel").hidden=true;return;}
     document.getElementById("propertyPanel").hidden=false;document.getElementById("nodeProperties").style.display="none";document.getElementById("linkProperties").style.display="none";document.getElementById("annotationProperties").style.display="";
     const isText=annotation.type==="text";document.getElementById("textAnnotationProperties").hidden=!isText;document.getElementById("imageAnnotationProperties").hidden=isText;
     if(isText){propAnnotationText.value=annotation.text||"";propAnnotationFontSize.value=annotation.fontSize||18;propAnnotationColor.value=/^#[0-9a-f]{6}$/i.test(annotation.color)?annotation.color:"#ffffff";propAnnotationBold.checked=annotation.bold!==false;propAnnotationItalic.checked=Boolean(annotation.italic);propAnnotationAlign.value=["start","middle","end"].includes(annotation.align)?annotation.align:"start";}
@@ -2180,7 +2193,7 @@ function isValidMac(value){return /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(value);}
 /* ==========================================================
    DRAG ENGINE
 ========================================================== */
-function isCanvasTarget(target){return !target.closest?.(".node,.waypointHandle,.annotation")&&!target.dataset?.linkId;}
+function isCanvasTarget(target){return !target.closest?.(".node,.waypointHandle,.annotation,.summaryDragHandle")&&!target.dataset?.linkId;}
 function setInteractionState(nextState){
     interactionState=nextState;
     svg.classList.toggle("isPanning",nextState===InteractionState.PANNING);
@@ -2504,6 +2517,8 @@ function createLayoutData(){
         annotations:annotations.map(annotation=>({...annotation})),
 
         statusSummaryTypes:[...statusSummaryTypes],
+        statusSummaryDeviceIds:[...statusSummaryDeviceIds],
+        statusSummaryPosition:{...statusSummaryPosition},
 
         diagramName:diagramName
         ,theme:theme
@@ -2814,6 +2829,8 @@ function loadLayout(data){
     });
     annotations.splice(0,annotations.length,...nextAnnotations);
     statusSummaryTypes=(Array.isArray(layout.statusSummaryTypes)?layout.statusSummaryTypes:[]).filter(type=>DEVICE_TYPES.has(type));
+    statusSummaryDeviceIds=(Array.isArray(layout.statusSummaryDeviceIds)?layout.statusSummaryDeviceIds:[]).map(String).filter(id=>nodes.some(node=>String(node.id)===id));
+    statusSummaryPosition={x:Number(layout.statusSummaryPosition?.x)||16,y:Number(layout.statusSummaryPosition?.y)||16};
     viewportState.zoom=Number.isFinite(Number(layout.zoom))?ViewportEngine.clampZoom(Number(layout.zoom),MIN_ZOOM,MAX_ZOOM):1;
     viewportState.panX=Number.isFinite(Number(layout.viewX))?Number(layout.viewX):0;
     viewportState.panY=Number.isFinite(Number(layout.viewY))?Number(layout.viewY):0;
@@ -3199,11 +3216,13 @@ function initializeDevicePalette(){
 
 function renderStatusDeviceOptions(search=""){
     const list=document.getElementById("statusDeviceList"),query=search.trim().toLowerCase();list.innerHTML="";
-    Object.entries(DEVICE_LIBRARY).sort(([,a],[,b])=>a.label.localeCompare(b.label)).forEach(([type,definition])=>{
-        if(query&&!`${definition.label} ${definition.category}`.toLowerCase().includes(query))return;
-        const label=document.createElement("label");label.className="statusDeviceOption";const checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.value=type;checkbox.checked=statusCheckDraft.has(type);checkbox.addEventListener("change",()=>checkbox.checked?statusCheckDraft.add(type):statusCheckDraft.delete(type));const text=document.createElement("span");text.textContent=`${definition.label} · ${definition.category}`;label.append(checkbox,text);list.appendChild(label);
+    nodes.slice().sort((a,b)=>String(a.text).localeCompare(String(b.text))).forEach(node=>{
+        const definition=getDeviceDefinition(node.type),searchText=`${node.text} ${definition.label} ${node.ip||""}`;
+        if(query&&!searchText.toLowerCase().includes(query))return;
+        const label=document.createElement("label");label.className="statusDeviceOption";const checkbox=document.createElement("input");checkbox.type="checkbox";checkbox.value=String(node.id);checkbox.checked=statusCheckDraft.has(String(node.id));checkbox.addEventListener("change",()=>{checkbox.checked?statusCheckDraft.add(String(node.id)):statusCheckDraft.delete(String(node.id));syncStatusSelectAll();});const text=document.createElement("span");text.textContent=`${node.text} · ${definition.label}`;label.append(checkbox,text);list.appendChild(label);
     });
 }
+function syncStatusSelectAll(){const all=document.getElementById("statusSelectAll"),count=nodes.filter(node=>statusCheckDraft.has(String(node.id))).length;all.checked=nodes.length>0&&count===nodes.length;all.indeterminate=count>0&&count<nodes.length;}
 document.getElementById("canvasContainer").addEventListener("click",event=>{
     if(Date.now()<suppressCanvasClickUntil)return;
     if(event.target.closest?.(".node,.waypointHandle,.annotation")||event.target.dataset?.linkId) return;
@@ -3219,6 +3238,7 @@ window.hotelNetworkDiagramCloudBridge=Object.freeze({
     getViewportState:()=>({...viewportState}),
     getInteractionState:()=>interactionState,
     setStorageUser:uid=>setLocalStorageUser(uid),
+    setGuestMode:enabled=>{guestMode=Boolean(enabled);document.body.classList.toggle("guestMode",guestMode);setReadOnlyMode(guestMode,{announce:false,persist:false});btnModeToggle.hidden=guestMode;},
     getUserLocalCache:uid=>{
         try{return localStorage.getItem(getUserLocalStorageKey(uid));}
         catch(error){console.warn("Unable to read the user cache",error);return null;}
@@ -3316,7 +3336,7 @@ const toolbarMenu=document.getElementById("toolbarMenu");
 const READ_ONLY_MODE_KEY="hotelNetworkDiagram.readOnlyMode";
 const READ_ONLY_MUTATION_IDS=new Set([
     "btnNewDiagram","btnOpen","btnOpenMain","btnUndo","btnRedo","btnAddDevice","btnAddText","btnAddImage","btnAddLink","btnCancelLink",
-    "btnCheckStatus","btnResetDefault","btnGrid","btnSnap","btnTheme","btnBackground","btnDiagramSettings","btnSyncMerge"
+    "btnResetDefault","btnGrid","btnSnap","btnTheme","btnBackground","btnDiagramSettings","btnSyncMerge"
 ]);
 
 function showReadOnlyNotice(){showFeedback("Read Mode aktif. Pilih Edit Mode untuk mengubah diagram.",false);}
@@ -3324,10 +3344,11 @@ function showReadOnlyNotice(){showFeedback("Read Mode aktif. Pilih Edit Mode unt
 function isReadOnlyMutationTarget(target){
     const element=target instanceof Element?target.closest("button,input,select,textarea,[role='menuitem']"):null;
     if(!element||element.id==="btnModeToggle"||element.id==="btnCloseProperties")return false;
-    return READ_ONLY_MUTATION_IDS.has(element.id)||Boolean(element.closest("#propertyPanel,#deviceModal,#statusCheckModal,#githubUpdateModal,#cameraModal,#backgroundModal,#diagramSettingsModal,#syncMergeModal,#contextMenu"));
+    return READ_ONLY_MUTATION_IDS.has(element.id)||Boolean(element.closest("#propertyPanel button:not(#btnCloseProperties),#propertyPanel input,#propertyPanel select,#propertyPanel textarea,#deviceModal,#githubUpdateModal,#cameraModal,#backgroundModal,#diagramSettingsModal,#syncMergeModal,#contextMenu"));
 }
 
-function setReadOnlyMode(enabled,{announce=true}={}){
+function setReadOnlyMode(enabled,{announce=true,persist=true}={}){
+    if(guestMode&&!enabled){showFeedback("Guest selalu Read Only. Login Google untuk mengedit.",true);return;}
     readOnlyMode=Boolean(enabled);
     document.body.classList.toggle("readMode",readOnlyMode);
     btnModeToggle.textContent=readOnlyMode?"✏ Edit Mode":"🔒 Read Mode";
@@ -3336,12 +3357,11 @@ function setReadOnlyMode(enabled,{announce=true}={}){
     document.getElementById("diagramName").readOnly=readOnlyMode;
     ["nodeProperties","linkProperties","annotationProperties"].forEach(id=>{document.getElementById(id).inert=readOnlyMode;});
     if(readOnlyMode){
-        document.getElementById("propertyPanel").hidden=true;
         pendingAnnotation=null;cancelLinkMode();contextMenu.style.display="none";dragging=null;annotationDrag=null;waypointDrag=null;touchPaletteDrag=null;clearPaletteDropFeedback();
         ["deviceModal","statusCheckModal","githubUpdateModal","backgroundModal","diagramSettingsModal","syncMergeModal"].forEach(id=>{document.getElementById(id).style.display="none";});
         if(cameraModal.style.display==="flex")closeDeviceCamera();
     }
-    try{localStorage.setItem(READ_ONLY_MODE_KEY,readOnlyMode?"1":"0");}catch(error){console.warn("Unable to save diagram mode",error);}
+    if(persist)try{localStorage.setItem(READ_ONLY_MODE_KEY,readOnlyMode?"1":"0");}catch(error){console.warn("Unable to save diagram mode",error);}
     document.getElementById("statusBar").textContent=readOnlyMode?"Read Mode · pan, zoom, inspect, and export only":"Edit Mode · diagram changes enabled";
     if(announce)showFeedback(readOnlyMode?"Read Mode aktif. Perubahan diagram dikunci.":"Edit Mode aktif. Diagram dapat diubah.",false);
 }
@@ -3392,9 +3412,10 @@ const lblModel=document.getElementById("lblModel");
 const lblPortCount=document.getElementById("lblPortCount");
 
 btnCheckStatus.onclick=function(){
-    statusCheckDraft=new Set(statusSummaryTypes);
+    statusCheckDraft=new Set(statusSummaryDeviceIds.length?statusSummaryDeviceIds:nodes.filter(node=>statusSummaryTypes.includes(node.type)).map(node=>String(node.id)));
     statusDeviceSearch.value="";
     renderStatusDeviceOptions();
+    syncStatusSelectAll();
     statusCheckModal.style.display="flex";
     statusDeviceSearch.focus();
 };
@@ -3445,17 +3466,18 @@ defaultDeviceNameUseThemeInput.addEventListener("change",function(){const value=
 defaultDeviceNameColorInput.addEventListener("change",function(){if(defaultDeviceNameUseThemeInput.checked)return;const value=/^#[0-9a-f]{6}$/i.test(this.value)?this.value:null;if(value===defaultDeviceNameColor)return;recordHistory();defaultDeviceNameColor=value;render();saveToLocalStorage();});
 globalStatusTextSizeInput.addEventListener("change",function(){const value=clampStatusTextSize(this.value);if(value===globalStatusTextSize)return;recordHistory();globalStatusTextSize=value;this.value=String(value);render();saveToLocalStorage();showFeedback(`Global status text size: ${value}px`,false);});
 statusDeviceSearch.addEventListener("input",()=>renderStatusDeviceOptions(statusDeviceSearch.value));
+document.getElementById("statusSelectAll").addEventListener("change",event=>{statusCheckDraft=event.currentTarget.checked?new Set(nodes.map(node=>String(node.id))):new Set();renderStatusDeviceOptions(statusDeviceSearch.value);syncStatusSelectAll();});
 document.getElementById("btnApplyStatusCheck").onclick=function(){
-    const nextTypes=[...statusCheckDraft];
-    if(JSON.stringify(nextTypes)!==JSON.stringify(statusSummaryTypes)) recordHistory();
-    statusSummaryTypes=nextTypes;
+    const nextIds=[...statusCheckDraft];
+    if(JSON.stringify(nextIds)!==JSON.stringify(statusSummaryDeviceIds)) recordHistory();
+    statusSummaryDeviceIds=nextIds;statusSummaryTypes=[];
     statusCheckModal.style.display="none";
     render();
     saveToLocalStorage();
 };
 document.getElementById("btnClearStatusCheck").onclick=function(){
-    if(statusSummaryTypes.length) recordHistory();
-    statusSummaryTypes=[];
+    if(statusSummaryTypes.length||statusSummaryDeviceIds.length) recordHistory();
+    statusSummaryTypes=[];statusSummaryDeviceIds=[];
     statusCheckDraft.clear();
     statusCheckModal.style.display="none";
     render();
