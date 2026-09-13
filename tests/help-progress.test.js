@@ -53,6 +53,14 @@ test("Progress retry callback is available after failure",()=>{
     delete global.document;
 });
 
+test("Progress can disable cancellation for a publish commit flow",()=>{
+    global.document={createElement:()=>fakeElement()};
+    const elements={modal:fakeElement(),title:fakeElement(),status:fakeElement(),percent:fakeElement(),track:fakeElement(),bar:fakeElement(),detail:fakeElement(),steps:fakeElement(),summary:fakeElement(),cancel:fakeElement(),retry:fakeElement(),close:fakeElement()};
+    const controller=new ProgressController(elements);controller.start({title:"PUBLISHING",stages:["Save"],allowCancel:false});controller.stage(0,{done:0,total:1,status:"Saving"});elements.cancel.click();
+    assert.equal(elements.cancel.hidden,true);assert.doesNotThrow(()=>controller.throwIfCancelled());
+    delete global.document;
+});
+
 test("Help contains only audited application categories",()=>{
     assert.deepEqual(help.categories(),["All","Getting Started","Diagram","Device","Files","Multi-User","Account"]);
     assert.ok(help.articles.length>=27);

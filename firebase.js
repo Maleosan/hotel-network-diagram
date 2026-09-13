@@ -72,11 +72,21 @@ const syncSourceSearch=document.getElementById("syncSourceSearch");
 const publishedDiagramList=document.getElementById("publishedDiagramList");
 const syncVersionStatus=document.getElementById("syncVersionStatus");
 const syncChangesList=document.getElementById("syncChangesList");
+const authProgress=document.getElementById("authProgress");
+const authProgressSteps=document.getElementById("authProgressSteps");
+const authErrorActions=document.getElementById("authErrorActions");
+const SIGN_IN_STAGES=["Connecting to Google","Authenticating","Loading your diagram","Preparing workspace"];
 const syncProgress=new syncProgressApi.ProgressController({
     modal:document.getElementById("syncProgressModal"),title:document.getElementById("syncProgressTitle"),status:document.getElementById("syncProgressStatus"),percent:document.getElementById("syncProgressPercent"),track:document.getElementById("syncProgressTrack"),bar:document.getElementById("syncProgressBar"),detail:document.getElementById("syncProgressDetail"),steps:document.getElementById("syncProgressSteps"),summary:document.getElementById("syncProgressSummary"),cancel:document.getElementById("btnCancelSyncProgress"),retry:document.getElementById("btnRetrySyncProgress"),close:document.getElementById("btnCloseSyncProgress")
 },busy=>{
     document.body.classList.toggle("syncOperationBusy",busy);
     [document.getElementById("toolbar"),document.getElementById("workspace"),syncModal].forEach(element=>{if(element)element.inert=busy;});
+});
+const publishProgress=new syncProgressApi.ProgressController({
+    modal:document.getElementById("publishProgressModal"),title:document.getElementById("publishProgressTitle"),status:document.getElementById("publishProgressStatus"),percent:document.getElementById("publishProgressPercent"),track:document.getElementById("publishProgressTrack"),bar:document.getElementById("publishProgressBar"),detail:document.getElementById("publishProgressDetail"),steps:document.getElementById("publishProgressSteps"),summary:document.getElementById("publishProgressSummary"),cancel:document.getElementById("btnCancelPublishProgress"),retry:document.getElementById("btnRetryPublishProgress"),close:document.getElementById("btnClosePublishProgress")
+},busy=>{
+    document.body.classList.toggle("publishOperationBusy",busy);
+    [document.getElementById("toolbar"),document.getElementById("workspace"),shareModal].forEach(element=>{if(element)element.inert=busy;});
 });
 
 let auth=null;
@@ -101,6 +111,22 @@ let saveQueued=false;
 let lastSaveError=null;
 let authGeneration=0;
 let syncOperationRunning=false;
+let signInRunning=false;
+let publishRunning=false;
+let startupStartedAt=performance.now();
+
+function logStartup(stage,startedAt=startupStartedAt){
+    const elapsed=Math.round(performance.now()-startedAt);
+    console.info(`[startup] ${stage}: ${elapsed}ms`);
+    return performance.now();
+}
+
+function setAuthProgress(stage,status,{error=false,success=false}={}){
+    const active=Math.max(0,Math.min(SIGN_IN_STAGES.length-1,stage));
+    authProgress.hidden=error||success;authErrorActions.hidden=!error;authMessage.textContent=status;
+    authProgressSteps.innerHTML="";
+    SIGN_IN_STAGES.forEach((label,index)=>{const item=document.createElement("li");item.className=index<active||success?"done":index===active&&!error?"active":"";item.textContent=`${item.className==="done"?"✓":item.className==="active"?"●":"○"} ${label}`;authProgressSteps.appendChild(item);});
+}
 
 function setSaveStatus(message,state=""){
     saveStatus.textContent=message;
@@ -154,7 +180,7 @@ function setUserDisplay(user){
 userPhoto.addEventListener("error",()=>{userPhoto.hidden=true;userInitial.hidden=false;});
 
 function showLogin(message="Sign in dengan akun Google untuk membuka diagram Anda."){
-    document.body.classList.remove("authenticated");document.getElementById("btnMenuToggle").hidden=true;closeToolbarMenu();authGate.hidden=false;accountPanel.hidden=true;signInButton.hidden=false;signInButton.disabled=false;localModeButton.hidden=true;authMessage.textContent=message;
+    document.body.classList.remove("authenticated");document.getElementById("btnMenuToggle").hidden=true;closeToolbarMenu();authGate.hidden=false;accountPanel.hidden=true;signInButton.hidden=false;signInButton.disabled=false;localModeButton.hidden=true;authProgress.hidden=true;authErrorActions.hidden=true;authMessage.textContent=message;signInRunning=false;
 }
 
 function showAuthenticatedApp(user){
@@ -322,7 +348,7 @@ function prepareCloudDiagram(diagramData){
     const cloudData={...diagramData,nodes:(Array.isArray(diagramData.nodes)?diagramData.nodes:[]).map(node=>{
         const {pictureData,pictureId,pictureHash,...cloudNode}=node;
         const parsed=parseImageDataUrl(pictureData);
-        if(!parsed)return cloudNode;
+        if(!parsed)return typeof pictureId==="string"&&typeof pictureHash==="string"?{...cloudNode,pictureId,pictureHash}:cloudNode;
         const byteLength=getBase64ByteLength(parsed.base64);
         if(byteLength>MAX_PHOTO_BYTES)throw new Error("Foto device lama terlalu besar untuk Firestore. Pilih ulang foto agar dikompres otomatis.");
         const hash=hashString(parsed.base64),id=`device-${hashString(String(node.id||"device"))}-${hash}`;
@@ -344,28 +370,33 @@ function getCachedPictureMap(user){
     return map;
 }
 
-async function hydrateCloudDiagram(serialized,user,metadata){
+function hydrateCloudDiagramFromCache(serialized,user,metadata){
     const layout=typeof serialized==="string"?JSON.parse(serialized):serialized;
     const cachedPictures=getCachedPictureMap(user),referencedIds=new Set();
     photoLoadFailures=0;
-    await runLimited((Array.isArray(layout?.nodes)?layout.nodes:[]).map(node=>async()=>{
+    (Array.isArray(layout?.nodes)?layout.nodes:[]).forEach(node=>{
         if(!node.pictureId||!node.pictureHash)return;
         referencedIds.add(node.pictureId);
         const cached=cachedPictures.get(node.id);
-        if(cached?.hash===node.pictureHash){
-            node.pictureData=cached.data;
-            if(hasFreshPhotoVerification(user.uid,node.pictureId,node.pictureHash)){verifiedPhotoIds.add(node.pictureId);return;}
-            const parsed=parseImageDataUrl(cached.data);
-            const repaired=await ensurePhotoDocument(user.uid,{id:node.pictureId,hash:node.pictureHash,mimeType:parsed.mimeType,byteLength:getBase64ByteLength(parsed.base64),data:Bytes.fromBase64String(parsed.base64)});
-            if(!repaired.verified)photoLoadFailures++;
-            return;
-        }
-        const result=await ensurePhotoDocument(user.uid,{id:node.pictureId,hash:node.pictureHash},{allowRepair:false});
-        if(!result.verified){photoLoadFailures++;return;}
-        node.pictureData=`data:${result.verified.mimeType};base64,${result.verified.base64}`;
-    }));
+        if(cached?.hash===node.pictureHash)node.pictureData=cached.data;
+        if(hasFreshPhotoVerification(user.uid,node.pictureId,node.pictureHash))verifiedPhotoIds.add(node.pictureId);
+    });
     knownPhotoIds=new Set(Array.isArray(metadata.photoIds)?metadata.photoIds.filter(id=>typeof id==="string"):referencedIds);
     return layout;
+}
+
+async function hydrateCloudPhotos(layout,user,generation){
+    const pending=(Array.isArray(layout?.nodes)?layout.nodes:[]).filter(node=>node.pictureId&&node.pictureHash&&!node.pictureData);
+    let completed=0;
+    await runLimited(pending.map(node=>async()=>{
+        const result=await ensurePhotoDocument(user.uid,{id:node.pictureId,hash:node.pictureHash},{allowRepair:false});
+        if(!result.verified){photoLoadFailures++;return;}
+        if(generation!==authGeneration||currentUser?.uid!==user.uid)return;
+        bridge.applyCloudPicture({nodeId:node.id,pictureId:node.pictureId,pictureHash:node.pictureHash,pictureData:`data:${result.verified.mimeType};base64,${result.verified.base64}`});
+        completed++;
+    }));
+    if(photoLoadFailures)bridge.showFeedback(`${photoLoadFailures} foto cloud tidak dapat dimuat. Diagram lainnya tetap dapat digunakan.`,true);
+    else if(completed)setSaveStatus(`✓ Cloud loaded · ${completed} photo(s) ready`,"saved");
 }
 
 async function runLimited(tasks,limit=6){
@@ -379,11 +410,7 @@ async function deleteChunks(uid,revision,count){
 }
 
 async function saveProfile(user){
-    const profileRef=doc(db,"users",user.uid);
-    const existing=await getDoc(profileRef);
-    const profile={displayName:user.displayName||"",email:user.email||"",photoURL:user.photoURL||"",lastLoginAt:serverTimestamp()};
-    if(!existing.exists())profile.createdAt=serverTimestamp();
-    await setDoc(profileRef,profile,{merge:true});
+    await setDoc(doc(db,"users",user.uid),{displayName:user.displayName||"",email:user.email||"",photoURL:user.photoURL||"",lastLoginAt:serverTimestamp()},{merge:true});
 }
 
 async function loadCloudDiagram(user){
@@ -401,8 +428,9 @@ async function loadCloudDiagram(user){
     }
     const cloudLayout=typeof serialized==="string"?JSON.parse(serialized):serialized;
     lastSavedCloudData=cloneValue(cloudLayout);
-    bridge.loadDiagramData(await hydrateCloudDiagram(cloneValue(cloudLayout),user,metadata));
-    return true;
+    const startupLayout=hydrateCloudDiagramFromCache(cloneValue(cloudLayout),user,metadata);
+    bridge.loadDiagramData(startupLayout);
+    return{loaded:true,layout:startupLayout};
 }
 
 function loadLocalFallback(user){
@@ -495,32 +523,45 @@ function getPhotoIdsFromChanges(changes){
     return ids;
 }
 
-async function publishDiagram(){
+const PUBLISH_STAGES=["Preparing diagram","Validating data","Saving current diagram","Preparing version","Saving published snapshot","Saving changes","Processing images","Updating published source","Finalizing"];
+
+async function publishDiagram(progress=publishProgress){
     if(!currentUser||!diagramReady)throw new Error("Login Google diperlukan untuk Publish.");
-    await waitForSaveIdle();await saveNow({manual:true});await waitForSaveIdle();if(lastSaveError)throw lastSaveError;
+    progress.stage(0,{done:1,total:1,status:"Diagram prepared",detail:bridge.getDiagramData().diagramName||"Current diagram"});
+    progress.stage(1,{done:1,total:1,status:"Diagram data validated"});
+    progress.indeterminate(2,"Saving current diagram…");
+    await waitForSaveIdle();await saveNow({manual:true});await waitForSaveIdle();if(lastSaveError)throw new Error(`Diagram save failed: ${getCloudErrorMessage(lastSaveError)}`);
+    progress.stage(2,{done:1,total:1,status:"Current diagram saved"});
     const publicationId=getPublicationId(currentUser.uid),reference=getPublicationRef(publicationId),existingSnapshot=await getDoc(reference),existing=existingSnapshot.exists()?existingSnapshot.data():null;
+    progress.stage(3,{done:1,total:1,status:"Publication version prepared",detail:`Publishing version ${knownVersion}`});
     const publishedVersion=Math.max(0,Number(existing?.publishedVersion??existing?.latestVersion)||0);
     const changes=existing?(await getPrivateChangesSince(currentUser.uid,publishedVersion)).filter(change=>change.newVersion<=knownVersion):buildChangeRecords(null,lastSavedCloudData,0,knownVersion,currentUser.uid);
     const serialized=JSON.stringify(lastSavedCloudData),chunks=chunkUtf8String(serialized),sourceRevision=`source-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
     if(chunks.length>MAX_CHUNK_COUNT)throw new Error("Diagram terlalu besar untuk dipublish.");
     const publicationBase={ownerUid:currentUser.uid,displayName:currentUser.displayName||"Google User",photoURL:currentUser.photoURL||"",diagramId:DIAGRAM_ID,diagramName:String(lastSavedCloudData?.diagramName||"HOTEL NETWORK DIAGRAM").slice(0,80)};
-    await setDoc(reference,{...publicationBase,published:false,publishedVersion,updatedAt:serverTimestamp(),allowedEmails:deleteField(),allowedUserIds:deleteField(),ownerEmail:deleteField(),name:deleteField(),latestVersion:deleteField(),ownerId:deleteField()},{merge:true});
-    await runLimited(chunks.map((data,index)=>()=>setDoc(getPublishedChunkRef(publicationId,sourceRevision,index),{revision:sourceRevision,index,data,ownerUid:currentUser.uid})));
-    await runLimited(changes.map(change=>()=>setDoc(getPublishedChangeRef(publicationId,change.changeId),{...change,publishedAt:serverTimestamp()})));
+    let chunkDone=0;progress.indeterminate(4,"Saving published snapshot…",`${chunks.length} chunk(s)`);
+    await runLimited(chunks.map((data,index)=>async()=>{await setDoc(getPublishedChunkRef(publicationId,sourceRevision,index),{revision:sourceRevision,index,data,ownerUid:currentUser.uid});chunkDone++;progress.stage(4,{done:chunkDone,total:chunks.length,status:"Saving published snapshot…",detail:`${chunkDone} / ${chunks.length} chunks`});}));
+    let changeDone=0;
+    if(changes.length)await runLimited(changes.map(change=>async()=>{await setDoc(getPublishedChangeRef(publicationId,change.changeId),{...change,publishedAt:serverTimestamp()});changeDone++;progress.stage(5,{done:changeDone,total:changes.length,status:"Saving version changes…",detail:`${changeDone} / ${changes.length} changes`});}));
+    else progress.stage(5,{done:1,total:1,status:"No new field changes"});
     const allPhotoIds=new Set((lastSavedCloudData?.nodes||[]).map(node=>node.pictureId).filter(Boolean));
+    let photoDone=0;
     await runLimited([...allPhotoIds].map(photoId=>async()=>{
         const published=await getDoc(getPublishedPhotoRef(publicationId,photoId));
         const expected=(lastSavedCloudData.nodes||[]).find(node=>node.pictureId===photoId)?.pictureHash;
-        if(published.exists()&&published.data()?.hash===expected)return;
-        const source=await getDoc(getPhotoRef(currentUser.uid,photoId));
-        if(!source.exists())throw new Error(`Foto ${photoId} belum tersedia di cloud. Klik Save to Cloud lalu coba publish lagi.`);
-        await setDoc(getPublishedPhotoRef(publicationId,photoId),{...source.data(),ownerUid:currentUser.uid,publishedAt:serverTimestamp()});
+        if(!published.exists()||published.data()?.hash!==expected){const source=await getDoc(getPhotoRef(currentUser.uid,photoId));if(!source.exists())throw new Error(`Foto ${photoId} belum tersedia di cloud. Klik Save to Cloud lalu coba publish lagi.`);await setDoc(getPublishedPhotoRef(publicationId,photoId),{...source.data(),ownerUid:currentUser.uid,publishedAt:serverTimestamp()});}
+        photoDone++;progress.stage(6,{done:photoDone,total:allPhotoIds.size,status:"Processing images…",detail:`${photoDone} / ${allPhotoIds.size} images`});
     }));
-    await setDoc(reference,{...publicationBase,published:true,publishedAt:existing?.publishedAt||serverTimestamp(),publishedVersion:knownVersion,sourceRevision,sourceChunkCount:chunks.length,sourceChecksum:hashString(serialized),sourceByteLength:new TextEncoder().encode(serialized).length,updatedAt:serverTimestamp()},{merge:true});
+    if(!allPhotoIds.size)progress.stage(6,{done:1,total:1,status:"No images to publish"});
+    progress.stage(7,{done:0,total:1,status:"Updating published source…",detail:"Committing publication metadata",cancellable:false});progress.setUnsafe("Updating published source…");
+    await setDoc(reference,{...publicationBase,published:true,publishedAt:existing?.publishedAt||serverTimestamp(),publishedVersion:knownVersion,sourceRevision,sourceChunkCount:chunks.length,sourceChecksum:hashString(serialized),sourceByteLength:new TextEncoder().encode(serialized).length,updatedAt:serverTimestamp(),allowedEmails:deleteField(),allowedUserIds:deleteField(),ownerEmail:deleteField(),name:deleteField(),latestVersion:deleteField(),ownerId:deleteField()},{merge:true});
+    progress.stage(7,{done:1,total:1,status:"Published source updated",cancellable:false});
     if(existing?.sourceRevision&&existing.sourceRevision!==sourceRevision)deletePublishedChunks(publicationId,existing.sourceRevision,Number(existing.sourceChunkCount)||0).catch(error=>console.warn("Old published snapshot could not be removed",error));
+    progress.stage(8,{done:1,total:1,status:"Publication finalized",cancellable:false});
     shareStatus.textContent=`✓ Published globally · v${knownVersion} · ${changes.length} field change(s)`;
     document.getElementById("btnUnpublish").hidden=false;
     bridge.showFeedback(`Diagram published at version ${knownVersion}.`,false);
+    return{diagram:publicationBase.diagramName,version:knownVersion,publishedAt:new Date()};
 }
 
 async function deletePublishedChunks(publicationId,revision,count){
@@ -736,22 +777,26 @@ async function openSyncModal(){
 }
 
 async function handleAuthenticatedUser(user,generation){
+    const authStartedAt=performance.now();logStartup("User authenticated",authStartedAt);
     currentUser=user;diagramReady=false;diagramExists=false;knownRevision=null;knownChunkCount=0;knownVersion=0;knownPhotoIds=new Set();verifiedPhotoIds=new Set();photoLoadFailures=0;lastSavedCloudData=null;
-    bridge.setStorageUser(user.uid);setUserDisplay(user);authMessage.textContent="Memuat diagram Anda...";signInButton.disabled=true;
+    bridge.setStorageUser(user.uid);setUserDisplay(user);setAuthProgress(2,"Loading your diagram...");signInButton.disabled=true;
     let cloudLoaded=false;
     let cloudError=null;
-    try{await saveProfile(user);}catch(error){console.error("Profile save failed",error);cloudError=error;}
-    try{cloudLoaded=await loadCloudDiagram(user);}catch(error){console.error("Cloud load failed",error);cloudError=error;}
+    let startupLayout=null;
+    void saveProfile(user).catch(error=>{console.warn("Secondary profile update failed",error);bridge.showFeedback("Profile update tertunda; diagram tetap dapat digunakan.",true);});
+    try{const result=await loadCloudDiagram(user);cloudLoaded=Boolean(result?.loaded);startupLayout=result?.layout||null;logStartup("Diagram available",authStartedAt);}catch(error){console.error("Cloud load failed",error);cloudError=error;}
     if(generation!==authGeneration)return;
+    setAuthProgress(3,"Preparing workspace...");
     if(!cloudLoaded)loadLocalFallback(user);
     diagramReady=true;showAuthenticatedApp(user);
+    logStartup("Workspace ready",authStartedAt);signInRunning=false;bridge.showFeedback(`✓ SIGN IN COMPLETE — Welcome, ${user.displayName||"Google User"}.`,false);
     if(cloudError){setSaveStatus("⚠ Save failed","error");bridge.showFeedback(`${getCloudErrorMessage(cloudError)} Diagram lokal tetap dapat digunakan.`,true);}
-    else if(cloudLoaded&&photoLoadFailures){setSaveStatus(`⚠ ${photoLoadFailures} foto belum sinkron`,"error");bridge.showFeedback(`${photoLoadFailures} foto cloud tidak ditemukan. Buka aplikasi pada perangkat asal lalu klik Save to Cloud untuk memperbaikinya.`,true);}
-    else if(cloudLoaded)setSaveStatus("✓ Cloud loaded","saved");
-    else{setSaveStatus("Unsaved changes","unsaved");await saveNow();}
+    else if(cloudLoaded){setSaveStatus("✓ Cloud loaded · photos loading lazily","saved");if(startupLayout)void hydrateCloudPhotos(startupLayout,user,generation).catch(error=>{console.warn("Lazy photo load failed",error);bridge.showFeedback("Some device photos could not be loaded.",true);});}
+    else{setSaveStatus("Unsaved changes","unsaved");scheduleCloudSave();}
 }
 
 async function handleAuthState(user){
+    if(user&&diagramReady&&currentUser?.uid===user.uid){setUserDisplay(user);showAuthenticatedApp(user);return;}
     const generation=++authGeneration;
     clearTimeout(saveTimer);saveTimer=null;saveQueued=false;diagramReady=false;
     if(!user){currentUser=null;knownVersion=0;knownPhotoIds=new Set();verifiedPhotoIds=new Set();photoLoadFailures=0;lastSavedCloudData=null;bridge.setStorageUser(null);showLogin();return;}
@@ -766,7 +811,14 @@ shareButton.addEventListener("click",()=>{void openShareModal().catch(error=>bri
 syncButton.addEventListener("click",()=>{void openSyncModal().catch(error=>bridge.showFeedback(getCloudErrorMessage(error),true));});
 document.getElementById("btnCloseSharePublish").addEventListener("click",()=>{shareModal.style.display="none";shareButton.focus();});
 document.getElementById("btnCloseSyncMerge").addEventListener("click",()=>{syncModal.style.display="none";syncButton.focus();});
-document.getElementById("btnConfirmSharePublish").addEventListener("click",async event=>{const button=event.currentTarget;button.disabled=true;shareStatus.textContent="Publishing changes…";try{await publishDiagram();}catch(error){shareStatus.textContent=`⚠ ${getCloudErrorMessage(error)}`;bridge.showFeedback(getCloudErrorMessage(error),true);}finally{button.disabled=false;}});
+async function runPublish(){
+    if(publishRunning){bridge.showFeedback("Publish masih berjalan.",true);return;}
+    publishRunning=true;const button=document.getElementById("btnConfirmSharePublish"),retry=()=>runPublish();button.disabled=true;publishProgress.start({title:"PUBLISHING DIAGRAM",stages:PUBLISH_STAGES,retry,allowCancel:false});
+    try{const result=await publishDiagram(publishProgress);publishProgress.complete({title:"✓ PUBLISH COMPLETED",summary:[`Diagram: ${result.diagram}`,`Version ${result.version} successfully published.`,`Published: ${result.publishedAt.toLocaleString("id-ID")}`]});}
+    catch(error){console.error("Publish failed",error);const message=getCloudErrorMessage(error);shareStatus.textContent=`❌ ${message}`;publishProgress.fail(new Error(message),{retry});bridge.showFeedback(message,true);}
+    finally{publishRunning=false;button.disabled=false;}
+}
+document.getElementById("btnConfirmSharePublish").addEventListener("click",()=>{void runPublish();});
 document.getElementById("btnUnpublish").addEventListener("click",async event=>{if(!confirm("Unpublish diagram ini? Data privat Anda tidak akan dihapus."))return;const button=event.currentTarget;button.disabled=true;try{await unpublishDiagram();}catch(error){bridge.showFeedback(getCloudErrorMessage(error),true);}finally{button.disabled=false;}});
 syncSourceSearch.addEventListener("input",renderPublishedDiagramList);
 document.getElementById("btnRefreshSync").addEventListener("click",()=>{void openSyncModal().catch(error=>bridge.showFeedback(getCloudErrorMessage(error),true));});
@@ -785,18 +837,21 @@ async function initializeFirebase(){
     auth=getAuth(firebaseApp);db=getFirestore(firebaseApp);provider=new GoogleAuthProvider();auth.useDeviceLanguage();
     try{await setPersistence(auth,browserLocalPersistence);}catch(error){console.warn("Firebase Auth persistence unavailable",error);}
     signInButton.disabled=false;authMessage.textContent="Sign in dengan akun Google untuk membuka diagram Anda.";
-    signInButton.addEventListener("click",async()=>{
-        signInButton.disabled=true;authMessage.textContent="Membuka login Google...";
-        try{await signInWithPopup(auth,provider);}
-        catch(error){console.error("Google sign-in failed",error);authMessage.textContent=getAuthErrorMessage(error);signInButton.disabled=false;}
-    });
+    const startSignIn=async()=>{
+        if(signInRunning)return;signInRunning=true;startupStartedAt=performance.now();signInButton.disabled=true;setAuthProgress(0,"Connecting to Google...");
+        try{setAuthProgress(1,"Authenticating...");await signInWithPopup(auth,provider);logStartup("Google authentication complete");}
+        catch(error){console.error("Google sign-in failed",error);signInRunning=false;signInButton.disabled=false;setAuthProgress(1,`❌ SIGN IN FAILED — ${getAuthErrorMessage(error)}`,{error:true});}
+    };
+    signInButton.addEventListener("click",()=>{void startSignIn();});
+    document.getElementById("btnRetrySignIn").addEventListener("click",()=>{authErrorActions.hidden=true;void startSignIn();});
+    document.getElementById("btnCloseSignInError").addEventListener("click",()=>showLogin());
     logoutButton.addEventListener("click",async()=>{
         logoutButton.disabled=true;
         try{if(currentUser&&diagramReady)await saveNow();authGate.hidden=false;authMessage.textContent="Logout...";await signOut(auth);}
         catch(error){console.error("Logout failed",error);bridge.showFeedback("Logout gagal. Silakan coba kembali.",true);authGate.hidden=true;}
         finally{logoutButton.disabled=false;}
     });
-    onAuthStateChanged(auth,user=>{void handleAuthState(user);},error=>{console.error("Auth state failed",error);showFirebaseFailure(getAuthErrorMessage(error));});
+    onAuthStateChanged(auth,user=>{logStartup(user?"Auth state listener resolved authenticated user":"Auth state listener resolved signed-out user");void handleAuthState(user);},error=>{console.error("Auth state failed",error);signInRunning=false;setAuthProgress(1,`❌ SIGN IN FAILED — ${getAuthErrorMessage(error)}`,{error:true});});
 }
 
 initializeFirebase().catch(error=>{
