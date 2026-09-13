@@ -242,7 +242,7 @@
 
             <label id="propPortCountLabel" for="propPortCount">Port Count</label>
 
-            <select id="propPortCount"></select>
+            <input id="propPortCount" type="number" min="1" max="512" step="1" inputmode="numeric">
 
             <div id="statusProperties">
                 <label for="propStatus">Status</label>
@@ -442,8 +442,7 @@
 
 <label id="lblPortCount" for="devicePortCount" style="display:none;">Port Count</label>
 
-<select id="devicePortCount" style="display:none;">
-</select>
+<input id="devicePortCount" type="number" min="1" max="512" step="1" inputmode="numeric" style="display:none;">
 
         <label for="deviceIconMode">Icon</label>
         <select id="deviceIconMode">
@@ -655,8 +654,9 @@
 <script src="sync-engine.js?v=20260905-3"></script>
 <script src="sync-progress.js?v=20260905-3"></script>
 <script src="help.js?v=20260905-3"></script>
-<script src="viewport-engine.js?v=20260905-3"></script>
-<script src="app.js?v=20260905-3"></script>
+<script src="viewport-engine.js?v=20260913-4"></script>
+<script src="port-engine.js?v=20260913-1"></script>
+<script src="app.js?v=20260913-4"></script>
 <script type="module" src="firebase.js?v=20260905-3"></script>
 </body>
 

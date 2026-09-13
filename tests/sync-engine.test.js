@@ -15,6 +15,27 @@ test("A source-only field change is safe",()=>{
     assert.equal(find(plan(base,current,source),"device","n1","text").conflict,false);
 });
 
+test("source-only port expansion merges portCount and persistent ports",()=>{
+    const ports=count=>Array.from({length:count},(_,index)=>({id:`port-${index+1}`,number:index+1}));
+    const base=layout([{id:"dvr",text:"DVR",portCount:16,ports:ports(16)}]);
+    const mine=engine.clone(base);
+    const source=layout([{id:"dvr",text:"DVR",portCount:32,ports:ports(32)}]);
+    const plan=engine.planThreeWay(base,mine,source);
+    assert.equal(plan.some(change=>change.conflict),false);
+    const merged=engine.applyChanges(mine,plan);
+    assert.equal(merged.nodes[0].portCount,32);
+    assert.equal(merged.nodes[0].ports.length,32);
+});
+
+test("divergent portCount edits are a field-level conflict",()=>{
+    const base=layout([{id:"router",text:"Router",portCount:16}]);
+    const mine=layout([{id:"router",text:"Router",portCount:24}]);
+    const source=layout([{id:"router",text:"Router",portCount:32}]);
+    const change=engine.planThreeWay(base,mine,source).find(item=>item.field==="portCount");
+    assert.equal(change.conflict,true);
+    assert.equal(change.current,24);
+});
+
 test("B current-only field change is preserved",()=>{
     const base=layout([node("n1")]),source=layout([node("n1")]),current=layout([node("n1",{notes:"Local"})]);
     assert.equal(plan(base,current,source).some(item=>item.field==="notes"),false);
