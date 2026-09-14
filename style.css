@@ -372,7 +372,7 @@ body.readMode #statusBar{color:#ffe082;}
 }
 
 .statusCheckContent{width:min(92vw,440px);max-height:85vh;overflow:auto;}
-.guestPublishedPicker{display:grid;gap:8px;margin-top:12px;text-align:left}.guestPublishedPicker select{width:100%;padding:10px;background:var(--field-bg);color:var(--text);border:1px solid var(--border);border-radius:6px}.statusSelectAll{display:flex;gap:8px;align-items:center;margin:8px 4px}.statusSelectAll input{width:auto}.summaryDragHandle{fill:transparent;cursor:move;touch-action:none}.deviceStatusSummary{filter:drop-shadow(0 4px 8px #0008)}
+.guestPublishedPicker{display:grid;gap:8px;margin-top:12px;text-align:left}.guestPublishedPicker select{width:100%;padding:10px;background:var(--field-bg);color:var(--text);border:1px solid var(--border);border-radius:6px}.guestPublishedStatus{min-height:1.4em;margin:0;color:#aebbc4;font-size:12px;line-height:1.4}.guestPublishedStatus.error{color:#ff9b9b}.guestPublishedStatus.success{color:#61dca7}.authCard .guestRetryButton{min-height:38px;background:#8b3030;color:#fff}.statusSelectAll{display:flex;gap:8px;align-items:center;margin:8px 4px}.statusSelectAll input{width:auto}.summaryDragHandle{fill:transparent;cursor:move;touch-action:none}.deviceStatusSummary{filter:drop-shadow(0 4px 8px #0008)}
 .githubSaveContent{width:min(92vw,460px);}
 .githubSaveContent p{line-height:1.45;color:var(--muted);}
 .githubSaveContent label{display:block;margin:12px 0 6px;}
