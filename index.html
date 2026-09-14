@@ -8,7 +8,7 @@
 
 <title>Hotel Network Diagram</title>
 
-<link rel="stylesheet" href="style.css?v=20260914-1">
+<link rel="stylesheet" href="style.css?v=20260914-2">
 
 </head>
 <body>
@@ -330,7 +330,7 @@
 
             <section class="mediaSection" aria-labelledby="devicePictureHeading">
                 <h3 id="devicePictureHeading">Device Picture</h3>
-                <div id="propPicturePreview" class="mediaPreview picturePreview">No picture</div>
+                <div id="propPicturePreview" class="mediaPreview picturePreview" aria-label="Device picture preview">No picture</div>
                 <small id="propPictureSizeInfo" class="pictureSizeInfo" aria-live="polite">Compressed automatically before saving.</small>
                 <button id="btnChangePicture" type="button">📁 From Computer</button>
                 <button id="btnTakePicture" type="button">📷 Camera</button>
@@ -620,6 +620,27 @@
     </div>
 </div>
 
+<div id="pictureLightbox" class="modal pictureLightbox" role="dialog" aria-modal="true" aria-labelledby="pictureLightboxTitle" aria-describedby="pictureLightboxHelp">
+    <div class="pictureLightboxContent">
+        <div class="pictureLightboxHeader">
+            <div>
+                <h2 id="pictureLightboxTitle">Device Picture</h2>
+                <p id="pictureLightboxHelp">Zoom the image, then drag to view more detail.</p>
+            </div>
+            <button id="btnClosePictureLightbox" class="pictureLightboxClose" type="button" aria-label="Close enlarged device picture">×</button>
+        </div>
+        <div id="pictureLightboxStage" class="pictureLightboxStage">
+            <img id="pictureLightboxImage" alt="Enlarged device picture">
+        </div>
+        <div class="pictureLightboxControls" aria-label="Picture zoom controls">
+            <button id="btnPictureZoomOut" type="button" aria-label="Zoom out">−</button>
+            <output id="pictureZoomLevel" aria-live="polite">100%</output>
+            <button id="btnPictureZoomIn" type="button" aria-label="Zoom in">+</button>
+            <button id="btnPictureZoomReset" type="button">Reset Zoom</button>
+        </div>
+    </div>
+</div>
+
 <div id="cameraModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="cameraModalTitle">
     <div class="modalContent cameraContent">
         <h2 id="cameraModalTitle">Take Device Photo</h2>
@@ -690,7 +711,7 @@
 <script src="help.js?v=20260905-3"></script>
 <script src="viewport-engine.js?v=20260913-4"></script>
 <script src="port-engine.js?v=20260913-1"></script>
-<script src="app.js?v=20260914-1"></script>
+<script src="app.js?v=20260914-2"></script>
 <script type="module" src="firebase.js?v=20260914-1"></script>
 </body>
 

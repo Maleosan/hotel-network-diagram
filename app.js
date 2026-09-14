@@ -83,6 +83,14 @@ let capturedDevicePhotoData="";
 let capturedDevicePhotoInfo=null;
 let cameraSessionId=0;
 const devicePictureInfo=new Map();
+const PICTURE_MIN_ZOOM=1;
+const PICTURE_MAX_ZOOM=8;
+let pictureZoom=1;
+let picturePan={x:0,y:0};
+let pictureDrag=null;
+const pictureTouches=new Map();
+let picturePinch=null;
+let pictureLightboxReturnFocus=null;
 const DEVICE_LIBRARY={
     router:{category:"Network",label:"Router",icon:"router",ports:5,models:["Generic Router","Branch Router"]},
     core_router:{category:"Network",label:"Core Router",icon:"router",ports:8,models:["Core Router","High Capacity Router"]},
@@ -2063,11 +2071,64 @@ function setPreview(element,data,emptyText){
     }else element.textContent=emptyText;
 }
 
+function clampPicturePan(){
+    const stage=document.getElementById("pictureLightboxStage"),image=document.getElementById("pictureLightboxImage");
+    if(!stage||!image)return;
+    const maxX=Math.max(0,(image.offsetWidth*pictureZoom-stage.clientWidth)/2);
+    const maxY=Math.max(0,(image.offsetHeight*pictureZoom-stage.clientHeight)/2);
+    picturePan.x=Math.max(-maxX,Math.min(maxX,picturePan.x));
+    picturePan.y=Math.max(-maxY,Math.min(maxY,picturePan.y));
+}
+
+function renderPictureTransform(){
+    const image=document.getElementById("pictureLightboxImage"),stage=document.getElementById("pictureLightboxStage");
+    clampPicturePan();
+    image.style.transform=`translate(${picturePan.x}px, ${picturePan.y}px) scale(${pictureZoom})`;
+    document.getElementById("pictureZoomLevel").value=`${Math.round(pictureZoom*100)}%`;
+    document.getElementById("btnPictureZoomOut").disabled=pictureZoom<=PICTURE_MIN_ZOOM;
+    document.getElementById("btnPictureZoomIn").disabled=pictureZoom>=PICTURE_MAX_ZOOM;
+    stage.classList.toggle("canPan",pictureZoom>PICTURE_MIN_ZOOM);
+}
+
+function setPictureZoom(nextZoom,origin=null){
+    const stage=document.getElementById("pictureLightboxStage"),previous=pictureZoom;
+    nextZoom=Math.max(PICTURE_MIN_ZOOM,Math.min(PICTURE_MAX_ZOOM,nextZoom));
+    if(origin&&nextZoom!==previous){
+        const rect=stage.getBoundingClientRect(),x=origin.x-rect.left-rect.width/2,y=origin.y-rect.top-rect.height/2,ratio=nextZoom/previous;
+        picturePan.x=x-(x-picturePan.x)*ratio;picturePan.y=y-(y-picturePan.y)*ratio;
+    }
+    pictureZoom=nextZoom;
+    if(pictureZoom===PICTURE_MIN_ZOOM)picturePan={x:0,y:0};
+    renderPictureTransform();
+}
+
+function resetPictureZoom(){pictureZoom=1;picturePan={x:0,y:0};renderPictureTransform();}
+
+function openPictureLightbox(){
+    if(!selectedNode||!isSafeImageData(selectedNode.pictureData))return;
+    const modal=document.getElementById("pictureLightbox"),image=document.getElementById("pictureLightboxImage");
+    pictureLightboxReturnFocus=document.activeElement;image.src=selectedNode.pictureData;image.alt=`Enlarged picture of ${getNodeLabel(selectedNode.id)}`;
+    modal.style.display="flex";resetPictureZoom();document.getElementById("btnClosePictureLightbox").focus();
+}
+
+function closePictureLightbox(){
+    const modal=document.getElementById("pictureLightbox");
+    if(modal.style.display!=="flex")return;
+    modal.style.display="none";pictureTouches.clear();pictureDrag=null;picturePinch=null;
+    document.getElementById("pictureLightboxStage").classList.remove("dragging");
+    if(pictureLightboxReturnFocus?.isConnected)pictureLightboxReturnFocus.focus();
+    pictureLightboxReturnFocus=null;
+}
+
 function updateNodeMediaPreviews(){
     if(!selectedNode) return;
     const iconPreview=document.getElementById("propIconPreview");
     if(selectedNode.iconType==="custom")setPreview(iconPreview,selectedNode.iconData,"Default icon");else setDefaultIconPreview(iconPreview,selectedNode);
-    setPreview(document.getElementById("propPicturePreview"),selectedNode.pictureData,"No picture");
+    const picturePreview=document.getElementById("propPicturePreview"),hasPicture=isSafeImageData(selectedNode.pictureData);
+    setPreview(picturePreview,selectedNode.pictureData,"No picture");
+    picturePreview.classList.toggle("hasPicture",hasPicture);picturePreview.tabIndex=hasPicture?0:-1;
+    if(hasPicture){picturePreview.setAttribute("role","button");picturePreview.title="View larger device picture";picturePreview.setAttribute("aria-label",`View larger picture of ${getNodeLabel(selectedNode.id)}`);}
+    else{picturePreview.removeAttribute("role");picturePreview.removeAttribute("title");picturePreview.setAttribute("aria-label","No device picture");}
     const sizeInfo=document.getElementById("propPictureSizeInfo"),bytes=getDataUrlByteSize(selectedNode.pictureData);
     sizeInfo.textContent=devicePictureInfo.get(selectedNode.id)||(bytes?`Stored compressed image: ${formatByteSize(bytes)}.`:"Compressed automatically before saving.");
     document.getElementById("btnResetIcon").disabled=selectedNode.iconType!=="custom";
@@ -3807,6 +3868,46 @@ propPictureFile.addEventListener("change",async function(){
 document.getElementById("btnRemovePicture").onclick=function(){
     if(!selectedNode||!selectedNode.pictureData)return;recordHistory();devicePictureInfo.delete(selectedNode.id);selectedNode.pictureData="";selectedNode.pictureId="";selectedNode.pictureHash="";updateNodeMediaPreviews();saveToLocalStorage();
 };
+const propPicturePreview=document.getElementById("propPicturePreview");
+const pictureLightbox=document.getElementById("pictureLightbox");
+const pictureLightboxStage=document.getElementById("pictureLightboxStage");
+propPicturePreview.addEventListener("click",openPictureLightbox);
+propPicturePreview.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();openPictureLightbox();}});
+document.getElementById("btnClosePictureLightbox").onclick=closePictureLightbox;
+document.getElementById("btnPictureZoomIn").onclick=()=>setPictureZoom(pictureZoom*1.25);
+document.getElementById("btnPictureZoomOut").onclick=()=>setPictureZoom(pictureZoom/1.25);
+document.getElementById("btnPictureZoomReset").onclick=resetPictureZoom;
+document.getElementById("pictureLightboxImage").addEventListener("load",resetPictureZoom);
+pictureLightbox.addEventListener("click",event=>{if(event.target===pictureLightbox)closePictureLightbox();});
+pictureLightboxStage.addEventListener("click",event=>{
+    const rect=document.getElementById("pictureLightboxImage").getBoundingClientRect();
+    if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closePictureLightbox();
+});
+pictureLightboxStage.addEventListener("wheel",event=>{event.preventDefault();setPictureZoom(pictureZoom*(event.deltaY<0?1.15:1/1.15),{x:event.clientX,y:event.clientY});},{passive:false});
+pictureLightboxStage.addEventListener("pointerdown",event=>{
+    pictureLightboxStage.setPointerCapture(event.pointerId);pictureTouches.set(event.pointerId,{x:event.clientX,y:event.clientY});
+    if(pictureTouches.size===2){
+        const points=[...pictureTouches.values()],distance=Math.hypot(points[1].x-points[0].x,points[1].y-points[0].y);
+        picturePinch={distance,zoom:pictureZoom};pictureDrag=null;
+    }else if(pictureZoom>PICTURE_MIN_ZOOM){pictureDrag={id:event.pointerId,x:event.clientX,y:event.clientY,panX:picturePan.x,panY:picturePan.y};pictureLightboxStage.classList.add("dragging");}
+});
+pictureLightboxStage.addEventListener("pointermove",event=>{
+    if(!pictureTouches.has(event.pointerId))return;
+    pictureTouches.set(event.pointerId,{x:event.clientX,y:event.clientY});
+    if(pictureTouches.size===2&&picturePinch){
+        const points=[...pictureTouches.values()],distance=Math.hypot(points[1].x-points[0].x,points[1].y-points[0].y),center={x:(points[0].x+points[1].x)/2,y:(points[0].y+points[1].y)/2};
+        setPictureZoom(picturePinch.zoom*distance/Math.max(1,picturePinch.distance),center);
+    }else if(pictureDrag?.id===event.pointerId){picturePan.x=pictureDrag.panX+event.clientX-pictureDrag.x;picturePan.y=pictureDrag.panY+event.clientY-pictureDrag.y;renderPictureTransform();}
+});
+function endPicturePointer(event){
+    pictureTouches.delete(event.pointerId);
+    if(pictureDrag?.id===event.pointerId)pictureDrag=null;
+    if(pictureTouches.size<2)picturePinch=null;
+    pictureLightboxStage.classList.toggle("dragging",Boolean(pictureDrag));
+}
+pictureLightboxStage.addEventListener("pointerup",endPicturePointer);
+pictureLightboxStage.addEventListener("pointercancel",endPicturePointer);
+window.addEventListener("resize",()=>{if(pictureLightbox.style.display==="flex")renderPictureTransform();});
 document.getElementById("btnCapturePhoto").onclick=captureDevicePhoto;
 document.getElementById("btnRetakePhoto").onclick=retakeDevicePhoto;
 document.getElementById("btnUsePhoto").onclick=useCapturedDevicePhoto;
@@ -3865,6 +3966,7 @@ function getNextDevicePosition(){
 document.addEventListener("keydown",function(e){
 
     if(e.key==="Escape"){
+        if(pictureLightbox.style.display==="flex"){closePictureLightbox();return;}
         if(toolbarMenu?.classList.contains("open")){setToolbarMenuOpen(false);btnMenuToggle.focus();return;}
         if(pendingAnnotation){pendingAnnotation=null;document.getElementById("statusBar").textContent="Ready";}
         if(cameraModal.style.display==="flex"){closeDeviceCamera();return;}
