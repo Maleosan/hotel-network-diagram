@@ -8,7 +8,7 @@
 
 <title>Hotel Network Diagram</title>
 
-<link rel="stylesheet" href="style.css?v=20260913-3">
+<link rel="stylesheet" href="style.css?v=20260914-1">
 
 </head>
 <body>
@@ -24,7 +24,9 @@
         <button id="btnGuestSignIn" class="localModeButton" type="button">Continue as Guest</button>
         <div id="guestPublishedPicker" class="guestPublishedPicker" hidden>
             <label for="guestPublishedSelect">Published diagram</label>
-            <select id="guestPublishedSelect"><option value="">Loading published diagrams…</option></select>
+            <select id="guestPublishedSelect" disabled><option value="">Choose Continue as Guest first</option></select>
+            <p id="guestPublishedStatus" class="guestPublishedStatus" role="status" aria-live="polite"></p>
+            <button id="btnRetryGuestDiagrams" class="guestRetryButton" type="button" hidden>Retry Published Diagrams</button>
             <button id="btnOpenGuestDiagram" type="button" disabled>Open Read-Only</button>
         </div>
         <button id="btnContinueLocal" class="localModeButton" type="button" hidden>Continue in Local Mode</button>
@@ -688,8 +690,8 @@
 <script src="help.js?v=20260905-3"></script>
 <script src="viewport-engine.js?v=20260913-4"></script>
 <script src="port-engine.js?v=20260913-1"></script>
-<script src="app.js?v=20260913-5"></script>
-<script type="module" src="firebase.js?v=20260913-1"></script>
+<script src="app.js?v=20260914-1"></script>
+<script type="module" src="firebase.js?v=20260914-2"></script>
 </body>
 
 </html>
