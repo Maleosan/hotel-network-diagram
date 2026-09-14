@@ -3265,7 +3265,7 @@ window.hotelNetworkDiagramCloudBridge=Object.freeze({
         render();
         if(!restoredViewport&&!layoutInfo.hasLegacyViewport)fitView({announce:false});
         else updateView();
-        saveToLocalStorage({notifyCloud:false});saveViewportState();
+        if(options.persist!==false){saveToLocalStorage({notifyCloud:false});saveViewportState();}
     },
     loadDefaultDiagram:()=>{
         loadLayout({nodes:DEFAULT_NODES,links:DEFAULT_LINKS,annotations:[],statusSummaryTypes:[],diagramName:"HOTEL NETWORK DIAGRAM",theme:"dark",gridEnabled:true,snapEnabled:true,background:{type:"theme",color:"#202020",data:"",fit:"cover",customized:false},globalDeviceScale:1,defaultDeviceNameColor:null,globalStatusTextSize:10});

@@ -2,12 +2,16 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    function isNonAnonymousUser() {
+      return request.auth != null && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
     function isOwner(userId) {
-      return request.auth != null && request.auth.uid == userId;
+      return isNonAnonymousUser() && request.auth.uid == userId;
     }
 
     function isPublicationOwner(data) {
-      return request.auth != null && (
+      return isNonAnonymousUser() && (
         ('ownerUid' in data && data.ownerUid == request.auth.uid) ||
         ('ownerId' in data && data.ownerId == request.auth.uid)
       );
@@ -63,7 +67,7 @@ service cloud.firestore {
         canReadPublishedData(resource.data)
       );
       allow list: if resource.data.published == true;
-      allow create: if request.auth != null && request.resource.data.ownerUid == request.auth.uid;
+      allow create: if isNonAnonymousUser() && request.resource.data.ownerUid == request.auth.uid;
       allow update: if isPublicationOwner(resource.data) && request.resource.data.ownerUid == request.auth.uid;
       allow delete: if isPublicationOwner(resource.data);
 

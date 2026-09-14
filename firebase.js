@@ -5,6 +5,7 @@ import {
     GoogleAuthProvider,
     onAuthStateChanged,
     setPersistence,
+    signInAnonymously,
     signInWithPopup,
     signOut
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
@@ -58,6 +59,8 @@ const guestButton=document.getElementById("btnGuestSignIn");
 const guestPicker=document.getElementById("guestPublishedPicker");
 const guestSelect=document.getElementById("guestPublishedSelect");
 const guestOpenButton=document.getElementById("btnOpenGuestDiagram");
+const guestStatus=document.getElementById("guestPublishedStatus");
+const guestRetryButton=document.getElementById("btnRetryGuestDiagrams");
 const accountPanel=document.getElementById("cloudAccount");
 const saveStatus=document.getElementById("cloudSaveStatus");
 const saveCloudButton=document.getElementById("btnSaveCloud");
@@ -80,6 +83,8 @@ const authProgress=document.getElementById("authProgress");
 const authProgressSteps=document.getElementById("authProgressSteps");
 const authErrorActions=document.getElementById("authErrorActions");
 const SIGN_IN_STAGES=["Connecting to Google","Authenticating","Loading your diagram","Preparing workspace"];
+const GUEST_STAGES=["Guest Login","Loading Published Diagrams","Ready"];
+const REQUEST_TIMEOUT=15000;
 const syncProgress=new syncProgressApi.ProgressController({
     modal:document.getElementById("syncProgressModal"),title:document.getElementById("syncProgressTitle"),status:document.getElementById("syncProgressStatus"),percent:document.getElementById("syncProgressPercent"),track:document.getElementById("syncProgressTrack"),bar:document.getElementById("syncProgressBar"),detail:document.getElementById("syncProgressDetail"),steps:document.getElementById("syncProgressSteps"),summary:document.getElementById("syncProgressSummary"),cancel:document.getElementById("btnCancelSyncProgress"),retry:document.getElementById("btnRetrySyncProgress"),close:document.getElementById("btnCloseSyncProgress")
 },busy=>{
@@ -118,6 +123,9 @@ let syncOperationRunning=false;
 let signInRunning=false;
 let publishRunning=false;
 let guestSession=false;
+let guestLoginRequested=false;
+let guestUsesAnonymousAuth=false;
+let guestLoadGeneration=0;
 let startupStartedAt=performance.now();
 
 function logStartup(stage,startedAt=startupStartedAt){
@@ -131,6 +139,18 @@ function setAuthProgress(stage,status,{error=false,success=false}={}){
     authProgress.hidden=error||success;authErrorActions.hidden=!error;authMessage.textContent=status;
     authProgressSteps.innerHTML="";
     SIGN_IN_STAGES.forEach((label,index)=>{const item=document.createElement("li");item.className=index<active||success?"done":index===active&&!error?"active":"";item.textContent=`${item.className==="done"?"✓":item.className==="active"?"●":"○"} ${label}`;authProgressSteps.appendChild(item);});
+}
+
+function setGuestProgress(stage,status,{error=false,success=false}={}){
+    const active=Math.max(0,Math.min(GUEST_STAGES.length-1,stage));
+    authProgress.hidden=error||success;authErrorActions.hidden=true;authMessage.textContent=status;
+    authProgressSteps.innerHTML="";
+    GUEST_STAGES.forEach((label,index)=>{const item=document.createElement("li");item.className=index<active||success?"done":index===active&&!error?"active":"";item.textContent=`${item.className==="done"?"✓":item.className==="active"?"●":"○"} ${label}`;authProgressSteps.appendChild(item);});
+}
+
+function withTimeout(promise,message){
+    let timeout;
+    return Promise.race([promise,new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error(message)),REQUEST_TIMEOUT);})]).finally(()=>clearTimeout(timeout));
 }
 
 function setSaveStatus(message,state=""){
@@ -148,6 +168,12 @@ function getAuthErrorMessage(error){
     if(error?.code==="auth/unauthorized-domain")return "Domain GitHub Pages belum diizinkan di Firebase Authentication.";
     if(error?.code==="auth/network-request-failed")return "Login gagal karena koneksi internet bermasalah.";
     return `Login Google gagal${error?.code?` (${error.code})`:""}. Silakan coba kembali.`;
+}
+
+function getGuestAuthErrorMessage(error){
+    if(error?.code==="auth/operation-not-allowed")return "Anonymous sign-in belum diaktifkan di Firebase Authentication.";
+    if(error?.code==="auth/network-request-failed")return "Koneksi ke Firebase gagal. Periksa jaringan lalu coba lagi.";
+    return error?.message||"Firebase gagal membuat Guest session.";
 }
 
 function getCloudErrorMessage(error){
@@ -185,7 +211,7 @@ function setUserDisplay(user){
 userPhoto.addEventListener("error",()=>{userPhoto.hidden=true;userInitial.hidden=false;});
 
 function showLogin(message="Sign in dengan akun Google untuk membuka diagram Anda."){
-    guestSession=false;bridge.setGuestMode(false);document.body.classList.remove("authenticated");document.getElementById("btnMenuToggle").hidden=true;closeToolbarMenu();authGate.hidden=false;accountPanel.hidden=true;signInButton.hidden=false;signInButton.disabled=false;guestButton.hidden=false;guestPicker.hidden=true;localModeButton.hidden=true;authProgress.hidden=true;authErrorActions.hidden=true;authMessage.textContent=message;signInRunning=false;
+    guestSession=false;guestLoginRequested=false;guestUsesAnonymousAuth=false;guestLoadGeneration++;bridge.setGuestMode(false);document.body.classList.remove("authenticated");document.getElementById("btnMenuToggle").hidden=true;closeToolbarMenu();authGate.hidden=false;accountPanel.hidden=true;signInButton.hidden=false;signInButton.disabled=false;guestButton.hidden=false;guestButton.disabled=false;guestPicker.hidden=true;guestSelect.disabled=true;guestRetryButton.hidden=true;guestStatus.textContent="";localModeButton.hidden=true;authProgress.hidden=true;authErrorActions.hidden=true;authMessage.textContent=message;signInRunning=false;
 }
 
 function showAuthenticatedApp(user){
@@ -782,22 +808,54 @@ async function openSyncModal(){
     availablePublications=await listAvailablePublications();renderPublishedDiagramList();syncVersionStatus.textContent=availablePublications.some(item=>item.ownerUid!==currentUser.uid)?"Choose a published source.":"Belum ada diagram publik dari pengguna lain.";syncSourceSearch.focus();
 }
 
-async function prepareGuestPicker(){
-    guestPicker.hidden=false;guestButton.disabled=true;authMessage.textContent="Loading published diagrams…";
+function setGuestPickerState(state,message){
+    guestStatus.className=`guestPublishedStatus${state==="error"?" error":state==="ready"?" success":""}`;
+    guestStatus.textContent=message;guestRetryButton.hidden=state!=="error";guestSelect.disabled=state!=="ready";guestOpenButton.disabled=state!=="ready"||!guestSelect.value;
+}
+
+async function loadGuestPublications(){
+    const generation=++guestLoadGeneration;
+    guestSelect.innerHTML='<option value="">Loading published diagrams…</option>';setGuestPickerState("loading","Mengambil data published dari Firebase…");setGuestProgress(1,"Loading Published Diagrams…");
     try{
-        const publications=await listAvailablePublications();guestSelect.innerHTML='<option value="">Select a published diagram</option>';
+        const publications=await withTimeout(listAvailablePublications(),"Waktu permintaan Published Diagram habis. Periksa koneksi lalu coba lagi.");
+        if(generation!==guestLoadGeneration||!guestSession)return;
+        availablePublications=publications;guestSelect.innerHTML="";
+        const placeholder=document.createElement("option");placeholder.value="";placeholder.textContent=publications.length?"Select a published diagram":"No published diagrams available";guestSelect.appendChild(placeholder);
         publications.forEach(item=>{const option=document.createElement("option");option.value=item.id;option.textContent=`${item.diagramName||"Diagram"} — ${item.displayName||"Published user"} (v${item.publishedVersion||0})`;guestSelect.appendChild(option);});
-        authMessage.textContent=publications.length?"Guest mode is strictly read-only.":"No published diagrams are available.";
-    }catch(error){guestPicker.hidden=true;authMessage.textContent=getCloudErrorMessage(error);}
-    finally{guestButton.disabled=false;guestOpenButton.disabled=!guestSelect.value;}
+        if(publications.length){setGuestPickerState("ready",`${publications.length} Published Diagram ditemukan. Pilih diagram untuk membuka mode READ-ONLY.`);setGuestProgress(2,"Ready — select a Published Diagram",{success:true});}
+        else{setGuestPickerState("empty","Tidak ada Published Diagram yang tersedia untuk Guest.");setGuestProgress(2,"No Published Diagrams available",{success:true});}
+    }catch(error){
+        if(generation!==guestLoadGeneration)return;
+        console.error("Guest publication load failed",error);guestSelect.innerHTML='<option value="">Published Diagrams unavailable</option>';setGuestPickerState("error",`❌ Gagal mengambil Published Diagram. ${getCloudErrorMessage(error)}`);setGuestProgress(1,"Published Diagram gagal dimuat",{error:true});
+    }
+}
+
+async function prepareGuestPicker(){
+    if(guestLoginRequested)return;
+    const generation=++guestLoadGeneration;guestLoginRequested=true;guestSession=false;guestPicker.hidden=false;guestButton.disabled=true;signInButton.disabled=true;guestRetryButton.hidden=true;setGuestPickerState("loading","Membuat Guest session…");setGuestProgress(0,"Guest Login…");
+    try{
+        let credential=null;
+        try{credential=await withTimeout(signInAnonymously(auth),"Waktu Guest Login habis. Periksa koneksi lalu coba lagi.");}
+        catch(error){
+            if(!["auth/operation-not-allowed","auth/admin-restricted-operation"].includes(error?.code))throw error;
+            console.info("Anonymous Auth is unavailable; continuing with the public Firestore guest session.");
+        }
+        if(generation!==guestLoadGeneration)return;
+        if(credential&&!credential.user?.isAnonymous)throw new Error("Firebase tidak membuat Guest session yang valid.");
+        guestSession=true;guestUsesAnonymousAuth=Boolean(credential?.user?.isAnonymous);guestLoginRequested=false;currentUser=null;bridge.setStorageUser(null);setGuestProgress(1,"Guest session ready. Loading Published Diagrams…");
+        await loadGuestPublications();
+    }catch(error){
+        if(generation!==guestLoadGeneration)return;
+        console.error("Guest sign-in failed",error);guestLoginRequested=false;guestSession=false;guestButton.disabled=false;signInButton.disabled=false;setGuestPickerState("error",`❌ Guest Login gagal. ${getGuestAuthErrorMessage(error)}`);setGuestProgress(0,"Guest Login gagal",{error:true});
+    }
 }
 
 async function openGuestDiagram(){
-    if(!guestSelect.value)return;guestOpenButton.disabled=true;authMessage.textContent="Opening published diagram…";
+    if(!guestSession||!guestSelect.value)return;guestOpenButton.disabled=true;guestSelect.disabled=true;guestRetryButton.hidden=true;setGuestProgress(2,"Opening Published Diagram in READ-ONLY mode…");setGuestPickerState("loading","Mengunduh snapshot Published Diagram…");
     try{
-        const snapshot=await getDoc(getPublicationRef(guestSelect.value));
+        const snapshot=await withTimeout(getDoc(getPublicationRef(guestSelect.value)),"Waktu membuka Published Diagram habis.");
         if(!snapshot.exists()||snapshot.data()?.published!==true)throw new Error("Published diagram tidak tersedia.");
-        const publication={id:snapshot.id,...snapshot.data()},layout=await loadPublishedLayout(publication),photoIds=new Set((layout.nodes||[]).map(node=>node.pictureId).filter(Boolean));
+        const publication={id:snapshot.id,...snapshot.data()},layout=await withTimeout(loadPublishedLayout(publication),"Waktu mengunduh data Published Diagram habis."),photoIds=new Set((layout.nodes||[]).map(node=>node.pictureId).filter(Boolean));
         for(const photoId of photoIds){
             const photoSnapshot=await getDoc(getPublishedPhotoRef(publication.id,photoId));
             for(const node of layout.nodes.filter(item=>item.pictureId===photoId)){
@@ -806,10 +864,10 @@ async function openGuestDiagram(){
                 const verified=readVerifiedPhotoSnapshot(photoSnapshot,node.pictureHash);if(verified)node.pictureData=`data:${verified.mimeType};base64,${verified.base64}`;
             }
         }
-        guestSession=true;currentUser=null;diagramReady=false;bridge.setStorageUser(`guest-${publication.id}`);bridge.loadDiagramData(layout);bridge.setGuestMode(true);
+        currentUser=null;diagramReady=false;bridge.setStorageUser(null);bridge.setGuestMode(true);bridge.loadDiagramData(layout,{persist:false});
         userName.textContent="Guest";userEmail.textContent=`Read-only · ${publication.diagramName||"Published diagram"}`;userInitial.textContent="G";userPhoto.hidden=true;accountPanel.hidden=false;saveStatus.textContent="Published view · read-only";logoutButton.textContent="Exit Guest";
         document.body.classList.add("authenticated");document.getElementById("btnMenuToggle").hidden=false;authGate.hidden=true;
-    }catch(error){authMessage.textContent=getCloudErrorMessage(error);guestOpenButton.disabled=false;}
+    }catch(error){console.error("Guest diagram open failed",error);setGuestPickerState("error",`❌ Diagram gagal dibuka. ${getCloudErrorMessage(error)}`);setGuestProgress(2,"Published Diagram gagal dibuka",{error:true});}
 }
 
 async function handleAuthenticatedUser(user,generation){
@@ -833,6 +891,11 @@ async function handleAuthenticatedUser(user,generation){
 }
 
 async function handleAuthState(user){
+    if(user?.isAnonymous){
+        if(guestLoginRequested||guestSession)return;
+        await signOut(auth).catch(error=>console.warn("Unable to clear an abandoned guest session",error));
+        return;
+    }
     if(user&&diagramReady&&currentUser?.uid===user.uid){setUserDisplay(user);showAuthenticatedApp(user);return;}
     const generation=++authGeneration;
     clearTimeout(saveTimer);saveTimer=null;saveQueued=false;diagramReady=false;
@@ -875,19 +938,20 @@ async function initializeFirebase(){
     try{await setPersistence(auth,browserLocalPersistence);}catch(error){console.warn("Firebase Auth persistence unavailable",error);}
     signInButton.disabled=false;authMessage.textContent="Sign in dengan akun Google untuk membuka diagram Anda.";
     const startSignIn=async()=>{
-        if(signInRunning)return;signInRunning=true;startupStartedAt=performance.now();signInButton.disabled=true;setAuthProgress(0,"Connecting to Google...");
+        if(signInRunning)return;guestLoginRequested=false;guestSession=false;guestLoadGeneration++;signInRunning=true;startupStartedAt=performance.now();signInButton.disabled=true;setAuthProgress(0,"Connecting to Google...");
         try{setAuthProgress(1,"Authenticating...");await signInWithPopup(auth,provider);logStartup("Google authentication complete");}
         catch(error){console.error("Google sign-in failed",error);signInRunning=false;signInButton.disabled=false;setAuthProgress(1,`❌ SIGN IN FAILED — ${getAuthErrorMessage(error)}`,{error:true});}
     };
     signInButton.addEventListener("click",()=>{void startSignIn();});
     guestButton.addEventListener("click",()=>{void prepareGuestPicker();});
     guestSelect.addEventListener("change",()=>{guestOpenButton.disabled=!guestSelect.value;});
+    guestRetryButton.addEventListener("click",()=>{if(guestSession)void loadGuestPublications();else void prepareGuestPicker();});
     guestOpenButton.addEventListener("click",()=>{void openGuestDiagram();});
     document.getElementById("btnRetrySignIn").addEventListener("click",()=>{authErrorActions.hidden=true;void startSignIn();});
     document.getElementById("btnCloseSignInError").addEventListener("click",()=>showLogin());
     logoutButton.addEventListener("click",async()=>{
         logoutButton.disabled=true;
-        if(guestSession){guestSession=false;logoutButton.textContent="Logout";bridge.setGuestMode(false);showLogin("Guest session ended.");logoutButton.disabled=false;return;}
+        if(guestSession){guestSession=false;guestLoadGeneration++;logoutButton.textContent="Logout";bridge.setGuestMode(false);if(guestUsesAnonymousAuth)try{await signOut(auth);}catch(error){console.warn("Guest sign-out failed",error);}showLogin("Guest session ended.");logoutButton.disabled=false;return;}
         try{if(currentUser&&diagramReady)await saveNow();authGate.hidden=false;authMessage.textContent="Logout...";await signOut(auth);}
         catch(error){console.error("Logout failed",error);bridge.showFeedback("Logout gagal. Silakan coba kembali.",true);authGate.hidden=true;}
         finally{logoutButton.disabled=false;}
