@@ -815,6 +815,7 @@ body.lightTheme #routeControls small{color:#52606d;}
     stroke-width:2;
 }
 .node .deviceIcon{fill:transparent;}
+.node.deviceOutlineHidden:not(.selected) .deviceIcon{stroke:transparent;}
 
 .node text{
     fill:white;
