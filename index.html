@@ -8,7 +8,7 @@
 
 <title>Hotel Network Diagram</title>
 
-<link rel="stylesheet" href="style.css?v=20260921-2">
+<link rel="stylesheet" href="style.css?v=20260921-3">
 
 </head>
 <body>
@@ -620,6 +620,9 @@
         <input id="globalStatusTextSize" type="number" min="8" max="32" step="1" value="10">
         <small>Used by devices that have “Use global status text size” enabled.</small>
 
+        <label class="checkLabel" for="deviceOutlineEnabled"><input id="deviceOutlineEnabled" type="checkbox" checked> Show outline around device icons</label>
+        <small>Turn this off to hide the normal circle around every device. Selection and Connect Mode feedback remain visible.</small>
+
         <button id="btnCloseDiagramSettings" type="button">Close</button>
     </div>
 </div>
@@ -709,15 +712,15 @@
 
 </div>
 
-<script src="sync-engine.js?v=20260905-3"></script>
-<script src="status-engine.js?v=20260913-1"></script>
+<script src="sync-engine.js?v=20260921-1"></script>
+<script src="status-engine.js?v=20260921-1"></script>
 <script src="sync-progress.js?v=20260913-1"></script>
 <script src="help.js?v=20260921-3"></script>
 <script src="viewport-engine.js?v=20260921-1"></script>
 <script src="port-engine.js?v=20260921-1"></script>
 <script src="png-export-engine.js?v=20260921-1"></script>
-<script src="app.js?v=20260921-3"></script>
-<script type="module" src="firebase.js?v=20260914-1"></script>
+<script src="app.js?v=20260921-4"></script>
+<script type="module" src="firebase.js?v=20260921-1"></script>
 </body>
 
 </html>
