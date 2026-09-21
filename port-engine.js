@@ -53,5 +53,25 @@
         });
         return result;
     }
-    return{MAX_PORTS,affectedConnections,endpointNumber,inferPortCount,normalizeConnectionPorts,normalizeDevice,normalizePorts,portId,portNumber,validCount};
+    function hasDuplicateConnection(links,from,to){
+        return (links||[]).some(link=>(link.from===from&&link.to===to)||(link.from===to&&link.to===from));
+    }
+    function firstAvailablePort(nodeId,count,links){
+        const used=new Set((links||[]).map(link=>endpointNumber(link,nodeId)).filter(Number.isInteger));
+        for(let number=1;number<=count;number++)if(!used.has(number))return number;
+        return null;
+    }
+    function planConnection({from,to,nodesById,links=[],allowParallel=false}={}){
+        const source=nodesById?.get?.(from),target=nodesById?.get?.(to);
+        if(!source||!target)return{ok:false,reason:"missing-device"};
+        if(from===to)return{ok:false,reason:"same-device"};
+        if(!allowParallel&&hasDuplicateConnection(links,from,to))return{ok:false,reason:"duplicate"};
+        const sourceCount=inferPortCount(source),targetCount=inferPortCount(target);
+        const sourcePort=sourceCount?firstAvailablePort(from,sourceCount,links):null;
+        const targetPort=targetCount?firstAvailablePort(to,targetCount,links):null;
+        if(sourceCount&&sourcePort===null)return{ok:false,reason:"source-full"};
+        if(targetCount&&targetPort===null)return{ok:false,reason:"target-full"};
+        return{ok:true,sourcePort,targetPort};
+    }
+    return{MAX_PORTS,affectedConnections,endpointNumber,firstAvailablePort,hasDuplicateConnection,inferPortCount,normalizeConnectionPorts,normalizeDevice,normalizePorts,planConnection,portId,portNumber,validCount};
 });
