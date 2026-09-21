@@ -3231,9 +3231,9 @@ function exportPNG(){
 
     let bounds,exportSvg;
     try{({bounds,exportSvg}=buildExportSVG());}catch(error){showFeedback("Diagram tidak dapat diekspor",true);return;}
-    const scale=4;
-
-    if(bounds.width*scale>16384 || bounds.height*scale>16384){showFeedback("Diagram terlalu besar untuk PNG",true);return;}
+    if(typeof HotelPngExportEngine==="undefined"){showFeedback("Mesin export PNG tidak tersedia",true);return;}
+    let plan;
+    try{plan=HotelPngExportEngine.createPlan(bounds,4);}catch(error){console.error(error);showFeedback("Ukuran diagram tidak valid",true);return;}
 
     const svgText=new XMLSerializer().serializeToString(exportSvg);
     const blob=new Blob([svgText],{type:"image/svg+xml;charset=utf-8"});
@@ -3242,39 +3242,44 @@ function exportPNG(){
     const img=new Image();
 
     img.onload=function(){
-
-        const canvas=document.createElement("canvas");
-
-        canvas.width=Math.ceil(bounds.width*scale);
-        canvas.height=Math.ceil(bounds.height*scale);
-
-        const ctx=canvas.getContext("2d");
-
-        if(!ctx){URL.revokeObjectURL(url);showFeedback("Canvas tidak didukung browser",true);return;}
-
-        ctx.clearRect(0,0,canvas.width,canvas.height);
-        ctx.imageSmoothingEnabled=false;
-        ctx.drawImage(img,0,0,canvas.width,canvas.height);
-
         URL.revokeObjectURL(url);
+        renderPlan(plan,3);
 
-        canvas.toBlob(function(pngBlob){
+        function renderPlan(currentPlan,attemptsLeft){
+            let canvas,ctx;
+            try{
+                canvas=document.createElement("canvas");
+                canvas.width=currentPlan.pixelWidth;
+                canvas.height=currentPlan.pixelHeight;
+                ctx=canvas.getContext("2d");
+                if(!ctx)throw new Error("Canvas context unavailable");
+                ctx.clearRect(0,0,canvas.width,canvas.height);
+                ctx.imageSmoothingEnabled=true;
+                ctx.imageSmoothingQuality="high";
+                ctx.drawImage(img,0,0,canvas.width,canvas.height);
+            }catch(error){
+                console.error(error);
+                retryOrFail(currentPlan,attemptsLeft);
+                return;
+            }
 
-            if(!pngBlob){showFeedback("Pembuatan PNG gagal",true);return;}
+            try{
+                canvas.toBlob(function(pngBlob){
+                    if(!pngBlob){retryOrFail(currentPlan,attemptsLeft);return;}
+                    downloadBlob(pngBlob,safeFilename(diagramName,"png"));
+                    const size=`${currentPlan.pixelWidth}×${currentPlan.pixelHeight}`;
+                    showFeedback(currentPlan.adjusted?`PNG berhasil diekspor (${size}, resolusi disesuaikan)`:`PNG berhasil diekspor (${size})`);
+                },"image/png");
+            }catch(error){
+                console.error(error);
+                retryOrFail(currentPlan,attemptsLeft);
+            }
+        }
 
-            const pngUrl=URL.createObjectURL(pngBlob);
-            const a=document.createElement("a");
-
-            a.href=pngUrl;
-            a.download=safeFilename(diagramName,"png");
-
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-
-            URL.revokeObjectURL(pngUrl);
-
-        },"image/png");
+        function retryOrFail(currentPlan,attemptsLeft){
+            if(attemptsLeft<=1){showFeedback("Pembuatan PNG gagal. Coba Export SVG untuk diagram ini.",true);return;}
+            renderPlan(HotelPngExportEngine.reducePlan(bounds,currentPlan),attemptsLeft-1);
+        }
 
     };
 
