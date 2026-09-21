@@ -300,7 +300,7 @@ function buildChangeRecords(previous,next,previousVersion,newVersion,userId){
         }
         for(const [id,item] of beforeMap)if(!afterMap.has(id))push({targetType,targetId:id,targetLabel:getLabel(item),operation:"delete",field:"$entity",before:item,after:null});
     }
-    const configFields=["diagramName","theme","gridEnabled","snapEnabled","background","globalDeviceScale","defaultDeviceNameColor","globalStatusTextSize","statusSummaryTypes"];
+    const configFields=["diagramName","theme","gridEnabled","snapEnabled","background","globalDeviceScale","defaultDeviceNameColor","globalStatusTextSize","deviceOutlineEnabled","statusSummaryTypes"];
     for(const field of configFields)if(!valuesEqual(previous?.[field],next?.[field]))push({targetType:"diagram",targetId:DIAGRAM_ID,targetLabel:"Diagram settings",operation:"update",field,before:previous?.[field],after:next?.[field]});
     return changes;
 }
