@@ -59,6 +59,10 @@ test("7. two-finger gesture always resolves to pinch zoom",()=>{
     assert.equal(engine.resolvePointerMode({pointerType:"touch",isWorldObject:true,touchCount:2}),engine.InteractionState.PINCH_ZOOMING);
 });
 
+test("7b. link connection has a dedicated interaction state",()=>{
+    assert.equal(engine.InteractionState.CONNECTING_LINK,"CONNECTING_LINK");
+});
+
 test("8. Fit View contains world bounds without modifying them",()=>{
     const bounds={x:-200,y:100,width:2400,height:1300},before={...bounds};
     const view=engine.fitViewport(bounds,{left:80,top:0,width:900,height:600},{minZoom:.1,maxZoom:4,paddingRatio:.12,minPadding:40,maxPadding:96});
