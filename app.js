@@ -77,6 +77,7 @@ let diagramBackground={type:"theme",color:"#202020",data:"",fit:"cover",customiz
 let globalDeviceScale=1;
 let defaultDeviceNameColor=null;
 let globalStatusTextSize=10;
+let deviceOutlineEnabled=true;
 let pendingDeviceIconData="";
 let cameraStream=null;
 let cameraTargetNode=null;
@@ -436,7 +437,8 @@ function cloneDiagramState(){
         background:{...diagramBackground},
         globalDeviceScale,
         defaultDeviceNameColor,
-        globalStatusTextSize
+        globalStatusTextSize,
+        deviceOutlineEnabled
 
     };
 
@@ -468,6 +470,7 @@ function restoreDiagramState(state,shouldPersist=true){
     globalDeviceScale=clampGlobalDeviceScale(state.globalDeviceScale);
     defaultDeviceNameColor=/^#[0-9a-f]{6}$/i.test(state.defaultDeviceNameColor)?state.defaultDeviceNameColor:null;
     globalStatusTextSize=clampStatusTextSize(state.globalStatusTextSize);
+    deviceOutlineEnabled=state.deviceOutlineEnabled!==false;
     applyDiagramBackground();
     document.getElementById("diagramName").value=diagramName;
 
@@ -1058,25 +1061,10 @@ function getActivePortCount(node){
 }
 
 function getConnectedDeviceStatus(node){
-    const visited=new Set([node.id]),queue=[node.id],connected=[];
-    while(queue.length){
-        const currentId=queue.shift();
-        links.forEach(link=>{
-            const remoteId=link.from===currentId?link.to:link.to===currentId?link.from:null;
-            if(!remoteId||visited.has(remoteId))return;
-            visited.add(remoteId);
-            const remote=nodes.find(item=>item.id===remoteId);if(!remote)return;
-            if(getDeviceDefinition(remote.type).status)connected.push(remote);
-            else if(getPortCount(remote)>1)queue.push(remoteId);
-        });
-    }
-    const summary={active:0,problem:0,inactive:0,total:connected.length,label:"Device"};
-    connected.forEach(remote=>{const status=["active","problem","inactive"].includes(remote.status)?remote.status:"active";summary[status]++;});
-    const types=new Set(connected.map(remote=>remote.type));
-    if(types.size===1&&types.has("pc"))summary.label="PC";
-    else if(connected.length&&connected.every(remote=>["camera","dome_camera","ptz_camera"].includes(remote.type)))summary.label="Camera";
-    else if(connected.length&&connected.every(remote=>["pc","laptop","thin_client","terminal"].includes(remote.type)))summary.label="Client";
-    return summary;
+    return StatusEngine.summarizeConnected(nodes,links,node.id,{
+        isStatusNode:remote=>Boolean(getDeviceDefinition(remote.type).status),
+        canTraverse:remote=>getPortCount(remote)>1
+    });
 }
 
 function drawAnnotation(annotation){
@@ -1142,6 +1130,7 @@ function drawNode(node){
 
     g.classList.add("node");
     if(node.iconType==="custom")g.classList.add("customIconNode");
+    if(!deviceOutlineEnabled)g.classList.add("deviceOutlineHidden");
     g.dataset.id=node.id;
     const displaySize=getNodeDisplaySize(node);
     const nodeScale=getNodeScale(node);
@@ -2742,6 +2731,7 @@ function createLayoutData(){
         ,globalDeviceScale:clampGlobalDeviceScale(globalDeviceScale)
         ,defaultDeviceNameColor:/^#[0-9a-f]{6}$/i.test(defaultDeviceNameColor)?defaultDeviceNameColor:null
         ,globalStatusTextSize:clampStatusTextSize(globalStatusTextSize)
+        ,deviceOutlineEnabled:Boolean(deviceOutlineEnabled)
 
     };
 
@@ -2980,6 +2970,7 @@ function loadLayout(data){
     const nextGlobalDeviceScale=clampGlobalDeviceScale(layout.globalDeviceScale);
     const nextDefaultDeviceNameColor=/^#[0-9a-f]{6}$/i.test(layout.defaultDeviceNameColor)?layout.defaultDeviceNameColor:null;
     const nextGlobalStatusTextSize=clampStatusTextSize(layout.globalStatusTextSize);
+    const nextDeviceOutlineEnabled=layout.deviceOutlineEnabled!==false;
 
     const nextNodes=[];
     const ids=new Set();
@@ -3056,6 +3047,7 @@ function loadLayout(data){
     globalDeviceScale=nextGlobalDeviceScale;
     defaultDeviceNameColor=nextDefaultDeviceNameColor;
     globalStatusTextSize=nextGlobalStatusTextSize;
+    deviceOutlineEnabled=nextDeviceOutlineEnabled;
     selectedNode=null; selectedElement=null; selectedLink=null; selectedAnnotation=null; pendingAnnotation=null; contextTarget=null; firstLinkNode=null; setLinkMode(false);
     document.getElementById("propertyPanel").hidden=true;
     const cancelButton=document.getElementById("btnCancelLink");
@@ -3145,7 +3137,7 @@ function createExportStyles(){
 
     style.textContent=`
         .node rect{fill:#2f3b52;stroke:#5ea8ff;stroke-width:2;rx:8;}
-        .node circle{fill:#2f3136;stroke:#00c8ff;stroke-width:2;}.node .deviceIcon{fill:transparent;}
+        .node circle{fill:#2f3136;stroke:#00c8ff;stroke-width:2;}.node .deviceIcon{fill:transparent;}.node.deviceOutlineHidden .deviceIcon{stroke:transparent;}
         .node text{fill:${exportTextColor};font-family:Segoe UI,Arial,sans-serif;font-size:13px;text-anchor:middle;dominant-baseline:middle;user-select:none;pointer-events:none;}
         .link{fill:none;}
         .linkLabel{fill:${exportTextColor};font-family:Segoe UI,Arial,sans-serif;font-size:12px;text-anchor:middle;paint-order:stroke;stroke:${getEffectiveBackgroundType()==="light"?"#eef3f7":"#202020"};stroke-width:4px;stroke-linejoin:round;}
@@ -3487,7 +3479,7 @@ window.hotelNetworkDiagramCloudBridge=Object.freeze({
         if(options.persist!==false){saveToLocalStorage({notifyCloud:false});saveViewportState();}
     },
     loadDefaultDiagram:()=>{
-        loadLayout({nodes:DEFAULT_NODES,links:DEFAULT_LINKS,annotations:[],statusSummaryTypes:[],diagramName:"HOTEL NETWORK DIAGRAM",theme:"dark",gridEnabled:true,snapEnabled:true,background:{type:"theme",color:"#202020",data:"",fit:"cover",customized:false},globalDeviceScale:1,defaultDeviceNameColor:null,globalStatusTextSize:10});
+        loadLayout({nodes:DEFAULT_NODES,links:DEFAULT_LINKS,annotations:[],statusSummaryTypes:[],diagramName:"HOTEL NETWORK DIAGRAM",theme:"dark",gridEnabled:true,snapEnabled:true,background:{type:"theme",color:"#202020",data:"",fit:"cover",customized:false},globalDeviceScale:1,defaultDeviceNameColor:null,globalStatusTextSize:10,deviceOutlineEnabled:true});
         const restoredViewport=loadViewportState();render();
         if(!restoredViewport)fitView({announce:false});else updateView();
         saveToLocalStorage({notifyCloud:false});saveViewportState();
@@ -3614,6 +3606,7 @@ const globalDeviceScaleInput=document.getElementById("globalDeviceScale");
 const defaultDeviceNameColorInput=document.getElementById("defaultDeviceNameColor");
 const defaultDeviceNameUseThemeInput=document.getElementById("defaultDeviceNameUseTheme");
 const globalStatusTextSizeInput=document.getElementById("globalStatusTextSize");
+const deviceOutlineEnabledInput=document.getElementById("deviceOutlineEnabled");
 
 const btnCreateDevice=document.getElementById("btnCreateDevice");
 const btnCloseDevice=document.getElementById("btnCloseDevice");
@@ -3678,6 +3671,7 @@ function syncDiagramSettingsControls(){
     defaultDeviceNameColorInput.value=/^#[0-9a-f]{6}$/i.test(defaultDeviceNameColor)?defaultDeviceNameColor:(theme==="light"?"#17202a":"#ffffff");
     defaultDeviceNameColorInput.disabled=defaultDeviceNameUseThemeInput.checked;
     globalStatusTextSizeInput.value=clampStatusTextSize(globalStatusTextSize);
+    deviceOutlineEnabledInput.checked=deviceOutlineEnabled;
 }
 btnDiagramSettings.onclick=function(){syncDiagramSettingsControls();diagramSettingsModal.style.display="flex";globalDeviceScaleInput.focus();};
 document.getElementById("btnCloseDiagramSettings").onclick=function(){diagramSettingsModal.style.display="none";btnDiagramSettings.focus();};
@@ -3685,6 +3679,7 @@ globalDeviceScaleInput.addEventListener("change",function(){const value=clampGlo
 defaultDeviceNameUseThemeInput.addEventListener("change",function(){const value=this.checked?null:defaultDeviceNameColorInput.value;if(value===defaultDeviceNameColor)return;recordHistory();defaultDeviceNameColor=value;defaultDeviceNameColorInput.disabled=this.checked;render();saveToLocalStorage();});
 defaultDeviceNameColorInput.addEventListener("change",function(){if(defaultDeviceNameUseThemeInput.checked)return;const value=/^#[0-9a-f]{6}$/i.test(this.value)?this.value:null;if(value===defaultDeviceNameColor)return;recordHistory();defaultDeviceNameColor=value;render();saveToLocalStorage();});
 globalStatusTextSizeInput.addEventListener("change",function(){const value=clampStatusTextSize(this.value);if(value===globalStatusTextSize)return;recordHistory();globalStatusTextSize=value;this.value=String(value);render();saveToLocalStorage();showFeedback(`Global status text size: ${value}px`,false);});
+deviceOutlineEnabledInput.addEventListener("change",function(){const value=this.checked;if(value===deviceOutlineEnabled)return;recordHistory();deviceOutlineEnabled=value;render();saveToLocalStorage();showFeedback(value?"Device outline ditampilkan":"Device outline disembunyikan",false);});
 statusDeviceSearch.addEventListener("input",()=>renderStatusDeviceOptions(statusDeviceSearch.value));
 document.getElementById("statusSelectAll").addEventListener("change",event=>{statusCheckDraft=event.currentTarget.checked?new Set(nodes.map(node=>String(node.id))):new Set();renderStatusDeviceOptions(statusDeviceSearch.value);syncStatusSelectAll();});
 document.getElementById("btnApplyStatusCheck").onclick=function(){
@@ -3963,7 +3958,7 @@ btnResetDefault.onclick=function(){
 };
 btnNewDiagram.onclick=function(){
     if(!confirm("Create a new blank diagram? Unsaved local changes will be replaced."))return;
-    recordHistory();loadLayout({nodes:[],links:[],annotations:[],statusSummaryTypes:[],zoom:1,viewX:0,viewY:0,diagramName:"NEW NETWORK DIAGRAM",theme,gridEnabled,snapEnabled,background:{type:"theme",color:"#202020",data:"",fit:"cover",customized:false},globalDeviceScale:1,defaultDeviceNameColor:null,globalStatusTextSize:10});
+    recordHistory();loadLayout({nodes:[],links:[],annotations:[],statusSummaryTypes:[],zoom:1,viewX:0,viewY:0,diagramName:"NEW NETWORK DIAGRAM",theme,gridEnabled,snapEnabled,background:{type:"theme",color:"#202020",data:"",fit:"cover",customized:false},globalDeviceScale:1,defaultDeviceNameColor:null,globalStatusTextSize:10,deviceOutlineEnabled:true});
     render();updateView();saveToLocalStorage();saveViewportState();showFeedback("New blank diagram created",false);
 };
 btnGrid.onclick=function(){
