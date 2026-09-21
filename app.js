@@ -1882,7 +1882,7 @@ function startWaypointDrag(e){
     selectedLink=link;selectedWaypointIndex=Number(e.currentTarget.dataset.waypointIndex);
     waypointDrag={link,index:selectedWaypointIndex,pointerId:e.pointerId,startRoute:link.route.map(point=>({...point}))};
     setInteractionState(InteractionState.DRAGGING_WAYPOINT);
-    try{e.currentTarget.setPointerCapture?.(e.pointerId);}catch(error){console.debug("Pointer capture unavailable",error);}
+    e.currentTarget.setPointerCapture?.(e.pointerId);
 }
 
 function moveWaypoint(e){
@@ -2423,7 +2423,7 @@ function startConnectGesture(e){
     preview.setAttribute("d",`M ${center.x} ${center.y} L ${center.x} ${center.y}`);
     linksLayer.appendChild(preview);
     e.currentTarget.classList.add("connectSource");
-    e.currentTarget.setPointerCapture?.(e.pointerId);
+    try{e.currentTarget.setPointerCapture?.(e.pointerId);}catch(error){console.debug("Pointer capture unavailable",error);}
     connectGesture={
         pointerId:e.pointerId,
         sourceNode,
