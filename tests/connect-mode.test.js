@@ -40,10 +40,14 @@ test("connect UI keeps click fallback and adds pointer drag feedback",()=>{
     const html=fs.readFileSync(path.join(root,"index.html"),"utf8");
     const css=fs.readFileSync(path.join(root,"style.css"),"utf8");
     assert.match(html,/id="btnAddLink"[^>]*aria-pressed="false"/);
+    assert.match(html,/id="btnPaletteAddLink"[^>]*data-connect-trigger[^>]*aria-pressed="false"/);
+    assert.equal((html.match(/data-connect-trigger/g)||[]).length,2);
     assert.match(app,/function startConnectGesture/);
     assert.match(app,/function moveConnectGesture/);
     assert.match(app,/function endConnectGesture/);
     assert.match(app,/if\(firstLinkNode==null\)/);
+    assert.match(app,/btnPaletteAddLink\.onclick=toggleLinkMode/);
     assert.match(css,/\.connectPreview/);
+    assert.match(css,/\.paletteConnectButton\.active/);
     assert.match(css,/\.node\.connectTargetValid/);
 });

@@ -209,7 +209,7 @@ body{display:flex;flex-direction:column;}
 .tools .modeToggle.active{background:#7a5a00;color:#fff3c4;box-shadow:inset 0 0 0 1px #ffca55;}
 body.readMode #paletteContent{opacity:.58;pointer-events:none;user-select:none;}
 body.readMode #propertyPanel button:not(#btnCloseProperties),body.readMode #propertyPanel .mediaSection input{display:none;}
-body.guestMode #btnSharePublish,body.guestMode #btnSyncMerge,body.guestMode #btnNewDiagram,body.guestMode #btnOpen,body.guestMode #btnSave,body.guestMode #btnOpenMain,body.guestMode #btnUndo,body.guestMode #btnRedo,body.guestMode #btnAddDevice,body.guestMode #btnAddText,body.guestMode #btnAddImage,body.guestMode #btnAddLink,body.guestMode #btnResetDefault,body.guestMode #btnGrid,body.guestMode #btnSnap,body.guestMode #btnTheme,body.guestMode #btnBackground,body.guestMode #btnDiagramSettings,body.guestMode #btnSaveCloud{display:none!important;}
+body.guestMode #btnSharePublish,body.guestMode #btnSyncMerge,body.guestMode #btnNewDiagram,body.guestMode #btnOpen,body.guestMode #btnSave,body.guestMode #btnOpenMain,body.guestMode #btnUndo,body.guestMode #btnRedo,body.guestMode #btnAddDevice,body.guestMode #btnAddText,body.guestMode #btnAddImage,body.guestMode #btnAddLink,body.guestMode #btnPaletteAddLink,body.guestMode #btnResetDefault,body.guestMode #btnGrid,body.guestMode #btnSnap,body.guestMode #btnTheme,body.guestMode #btnBackground,body.guestMode #btnDiagramSettings,body.guestMode #btnSaveCloud{display:none!important;}
 body.readMode .node{cursor:pointer;}
 body.readMode .annotation{cursor:pointer;}
 body.readMode .waypointHandle{display:none;}
@@ -246,6 +246,15 @@ body.readMode #statusBar{color:#ffe082;}
 #devicePalette.collapsed .paletteHeader button{transform:rotate(180deg);}
 #paletteContent{height:calc(100% - 50px);padding:10px;overflow:auto;}
 #paletteSearch{width:100%;height:38px;margin-bottom:10px;padding:0 9px;border:1px solid var(--border);border-radius:5px;background:var(--field-bg);color:var(--text);}
+.paletteConnectButton{display:flex;align-items:center;gap:10px;width:100%;min-height:50px;margin:0 0 10px;padding:7px 9px;border:1px solid #00a8ff;border-radius:6px;background:rgba(0,168,255,.1);color:var(--text);text-align:left;cursor:pointer;touch-action:manipulation;}
+.paletteConnectButton:hover,.paletteConnectButton:focus-visible{background:rgba(0,168,255,.2);box-shadow:0 0 0 2px rgba(0,168,255,.18);}
+.paletteConnectButton.active{border-color:#32d7ff;background:#006b91;color:#fff;box-shadow:inset 0 0 0 1px #32d7ff,0 0 10px rgba(0,200,255,.35);}
+.paletteConnectButton>span:last-child{display:grid;gap:2px;min-width:0;}
+.paletteConnectButton strong{font-size:12px;text-transform:uppercase;letter-spacing:.025em;}
+.paletteConnectButton small{overflow:hidden;color:var(--muted,#aeb8c2);font-size:10px;text-overflow:ellipsis;white-space:nowrap;}
+.paletteConnectButton.active small{color:#d9f8ff;}
+.paletteConnectIcon{display:grid;place-items:center;width:30px;height:30px;flex:0 0 30px;border:1px solid currentColor;border-radius:50%;color:#00d4ff;font-size:18px;font-weight:700;}
+.paletteConnectButton.active .paletteConnectIcon{color:#fff;}
 .paletteCategory{margin-bottom:7px;border:1px solid var(--border);border-radius:6px;overflow:hidden;}
 .paletteCategory summary{padding:9px 10px;background:var(--field-bg);cursor:pointer;font-size:12px;font-weight:600;user-select:none;}
 .paletteDeviceList{display:grid;gap:4px;padding:6px;}

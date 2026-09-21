@@ -844,9 +844,11 @@ function cancelLinkMode(){
 function setLinkMode(enabled){
     linkMode=Boolean(enabled);
     document.body.classList.toggle("connectMode",linkMode);
-    const button=document.getElementById("btnAddLink");
     const cancelButton=document.getElementById("btnCancelLink");
-    if(button){button.classList.toggle("active",linkMode);button.setAttribute("aria-pressed",String(linkMode));}
+    document.querySelectorAll("[data-connect-trigger]").forEach(button=>{
+        button.classList.toggle("active",linkMode);
+        button.setAttribute("aria-pressed",String(linkMode));
+    });
     if(cancelButton)cancelButton.hidden=!linkMode;
     if(!linkMode){
         if(connectGesture)cancelConnectGesture();
@@ -3528,6 +3530,7 @@ const btnAddText=document.getElementById("btnAddText");
 const btnAddImage=document.getElementById("btnAddImage");
 const annotationImageFile=document.getElementById("annotationImageFile");
 const btnAddLink=document.getElementById("btnAddLink");
+const btnPaletteAddLink=document.getElementById("btnPaletteAddLink");
 const btnExportPNG=document.getElementById("btnExportPNG");
 const btnReset=document.getElementById("btnReset");
 const btnFitView=document.getElementById("btnFitView");
@@ -3547,7 +3550,7 @@ const toolbarMenu=document.getElementById("toolbarMenu");
 
 const READ_ONLY_MODE_KEY="hotelNetworkDiagram.readOnlyMode";
 const READ_ONLY_MUTATION_IDS=new Set([
-    "btnNewDiagram","btnOpen","btnOpenMain","btnUndo","btnRedo","btnAddDevice","btnAddText","btnAddImage","btnAddLink","btnCancelLink",
+    "btnNewDiagram","btnOpen","btnOpenMain","btnUndo","btnRedo","btnAddDevice","btnAddText","btnAddImage","btnAddLink","btnPaletteAddLink","btnCancelLink",
     "btnResetDefault","btnGrid","btnSnap","btnTheme","btnBackground","btnDiagramSettings","btnSyncMerge"
 ]);
 
@@ -3972,14 +3975,15 @@ btnSnap.onclick=function(){
     saveToLocalStorage();
 
 };
-btnAddLink.onclick=function(){
+function toggleLinkMode(){
     if(linkMode){cancelLinkMode();return;}
     setLinkMode(true);
     firstLinkNode=null;
     document.getElementById("statusBar").textContent=
         "CONNECT MODE · drag dari device sumber ke device tujuan (atau klik dua device)";
-
-};
+}
+btnAddLink.onclick=toggleLinkMode;
+btnPaletteAddLink.onclick=toggleLinkMode;
 btnCancelLink.onclick=cancelLinkMode;
 btnExportSVG.onclick=exportSVG;
 btnTheme.onclick=function(){theme=theme==="dark"?"light":"dark";applyTheme();render();saveToLocalStorage();};
