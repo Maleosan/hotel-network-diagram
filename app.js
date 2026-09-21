@@ -49,6 +49,7 @@ let waypointDrag = null;
 
 let linkMode=false;
 let firstLinkNode=null;
+let connectGesture=null;
 
 let contextTarget=null;
 let spacePressed=false;
@@ -477,7 +478,7 @@ function restoreDiagramState(state,shouldPersist=true){
     pendingAnnotation=null;
     selectedWaypointIndex=null;
     contextTarget=null;
-    linkMode=false;
+    setLinkMode(false);
     document.getElementById("propertyPanel").hidden=true;
     document.getElementById("btnCancelLink").hidden=true;
     firstLinkNode=null;
@@ -834,9 +835,38 @@ function isEditingTarget(target){
 }
 
 function cancelLinkMode(){
-    linkMode=false; firstLinkNode=null;
-    document.getElementById("btnCancelLink").hidden=true;
+    cancelConnectGesture();
+    setLinkMode(false);
+    firstLinkNode=null;
     showFeedback("Link mode dibatalkan");
+}
+
+function setLinkMode(enabled){
+    linkMode=Boolean(enabled);
+    document.body.classList.toggle("connectMode",linkMode);
+    const button=document.getElementById("btnAddLink");
+    const cancelButton=document.getElementById("btnCancelLink");
+    if(button){button.classList.toggle("active",linkMode);button.setAttribute("aria-pressed",String(linkMode));}
+    if(cancelButton)cancelButton.hidden=!linkMode;
+    if(!linkMode){
+        if(connectGesture)cancelConnectGesture();
+        else clearConnectVisuals();
+    }
+}
+
+function clearConnectVisuals(){
+    document.querySelectorAll(".node.connectSource,.node.connectTargetValid,.node.connectTargetInvalid")
+        .forEach(element=>element.classList.remove("connectSource","connectTargetValid","connectTargetInvalid"));
+    linksLayer.querySelector(".connectPreview")?.remove();
+}
+
+function cancelConnectGesture(){
+    if(connectGesture?.sourceElement?.hasPointerCapture?.(connectGesture.pointerId)){
+        try{connectGesture.sourceElement.releasePointerCapture(connectGesture.pointerId);}catch(error){console.debug("Pointer capture already released",error);}
+    }
+    connectGesture=null;
+    clearConnectVisuals();
+    if(interactionState===InteractionState.CONNECTING_LINK)setInteractionState(InteractionState.IDLE);
 }
 
 function updateLayoutTools(){
@@ -973,6 +1003,47 @@ function firstFreePort(nodeId,exceptId){
     const node=nodes.find(n=>n.id===nodeId);
     for(let port=1;port<=getPortCount(node);port++) if(!isPortUsed(nodeId,port,exceptId)) return port;
     return null;
+}
+
+function planConnectionBetween(sourceNode,targetNode){
+    return PortEngine.planConnection({
+        from:sourceNode?.id,
+        to:targetNode?.id,
+        nodesById:new Map(nodes.map(node=>[node.id,node])),
+        links
+    });
+}
+
+function createConnectionBetween(sourceNode,targetNode){
+    const plan=planConnectionBetween(sourceNode,targetNode);
+    if(!plan.ok)return plan;
+    recordHistory();
+    const link=syncLinkPortIds(normalizeLink({
+        from:sourceNode.id,
+        to:targetNode.id,
+        sourcePort:plan.sourcePort,
+        targetPort:plan.targetPort
+    }));
+    links.push(link);
+    selectedLink=link;
+    return{ok:true,link};
+}
+
+function getConnectionErrorMessage(reason){
+    if(reason==="same-device")return"Device tidak dapat dihubungkan ke dirinya sendiri";
+    if(reason==="duplicate")return"Koneksi antara kedua device sudah ada";
+    if(reason==="source-full")return"Semua port pada device sumber sudah digunakan";
+    if(reason==="target-full")return"Semua port pada device tujuan sudah digunakan";
+    return"Device tujuan tidak valid atau sudah tidak tersedia";
+}
+
+function flashConnectionSuccess(fromId,toId){
+    [fromId,toId].forEach(id=>{
+        const element=nodesLayer.querySelector(`.node[data-id="${CSS.escape(id)}"]`);
+        if(!element)return;
+        element.classList.add("connectSuccess");
+        setTimeout(()=>element.classList.remove("connectSuccess"),700);
+    });
 }
 
 function getActivePortCount(node){
@@ -1811,7 +1882,7 @@ function startWaypointDrag(e){
     selectedLink=link;selectedWaypointIndex=Number(e.currentTarget.dataset.waypointIndex);
     waypointDrag={link,index:selectedWaypointIndex,pointerId:e.pointerId,startRoute:link.route.map(point=>({...point}))};
     setInteractionState(InteractionState.DRAGGING_WAYPOINT);
-    e.currentTarget.setPointerCapture?.(e.pointerId);
+    try{e.currentTarget.setPointerCapture?.(e.pointerId);}catch(error){console.debug("Pointer capture unavailable",error);}
 }
 
 function moveWaypoint(e){
@@ -1920,57 +1991,26 @@ if(linkMode){
     if(firstLinkNode==null){
 
         firstLinkNode=selectedNode;
+        e.currentTarget.classList.add("connectSource");
 
         document.getElementById("statusBar").textContent=
-        "LINK MODE : pilih device kedua";
+        "CONNECT MODE · klik device tujuan, atau drag langsung dari device sumber ke tujuan";
 
         return;
 
     }
 
-    let linkError=false;
-    const firstStillExists=nodes.some(n=>n.id===firstLinkNode.id);
-    const duplicate=links.some(link=>(link.from===firstLinkNode.id && link.to===selectedNode.id) ||
-        (link.from===selectedNode.id && link.to===firstLinkNode.id));
-
-    if(firstStillExists && firstLinkNode.id!==selectedNode.id && !duplicate){
-
-        const sourcePort=firstFreePort(firstLinkNode.id);
-        const targetPort=firstFreePort(selectedNode.id);
-
-        if((getPortCount(firstLinkNode)>0 && sourcePort===null) || (getPortCount(selectedNode)>0 && targetPort===null)){
-            showFeedback("Tidak ada port kosong untuk koneksi ini",true);
-            linkError=true;
-        }else{
-
-        recordHistory();
-
-        const newLink=syncLinkPortIds(normalizeLink({from:firstLinkNode.id,to:selectedNode.id,sourcePort,targetPort}));
-        links.push(newLink);
-        selectedLink=newLink;
-        }
-
-    }else if(firstLinkNode.id===selectedNode.id){
-        showFeedback("Device tidak dapat dihubungkan ke dirinya sendiri",true);
-        linkError=true;
-    }else if(duplicate){
-        showFeedback("Koneksi antara kedua device sudah ada",true);
-        linkError=true;
-
-    }
-
+    const sourceNode=firstLinkNode;
+    const result=createConnectionBetween(sourceNode,selectedNode);
     firstLinkNode=null;
-
-    linkMode=false;
-    document.getElementById("btnCancelLink").hidden=true;
-
+    setLinkMode(false);
     render();
-    saveToLocalStorage();
-
-    if(!linkError){
-        document.getElementById("statusBar").textContent="Connection created — choose its port/channel in Properties";
-        selectLinkById(selectedLink.id);
-    }
+    if(result.ok){
+        saveToLocalStorage();
+        selectLinkById(result.link.id);
+        flashConnectionSuccess(sourceNode.id,selectedNode.id);
+        showFeedback("Koneksi berhasil dibuat · port otomatis dapat diubah di Properties");
+    }else showFeedback(getConnectionErrorMessage(result.reason),true);
 
     return;
 
@@ -2260,6 +2300,7 @@ function setInteractionState(nextState){
     svg.classList.toggle("isPanning",nextState===InteractionState.PANNING);
     svg.classList.toggle("isPinching",nextState===InteractionState.PINCH_ZOOMING);
     svg.classList.toggle("isDraggingDevice",nextState===InteractionState.DRAGGING_DEVICE);
+    svg.classList.toggle("isConnectingLink",nextState===InteractionState.CONNECTING_LINK);
 }
 function beginCanvasPan(e){
     setInteractionState(InteractionState.PANNING);
@@ -2274,6 +2315,7 @@ function beginCanvasPan(e){
 }
 function cancelObjectGestureForPinch(){
     let needsRender=false;
+    if(connectGesture)cancelConnectGesture();
     if(dragging&&selectedNode&&dragStartPosition){
         selectedNode.x=dragStartPosition.x;selectedNode.y=dragStartPosition.y;
         dragging=null;draggingPointerId=null;dragStartPosition=null;needsRender=true;
@@ -2346,6 +2388,105 @@ function getViewportPoint(e){
     return ViewportEngine.screenToWorld({x:e.clientX,y:e.clientY},svg.getBoundingClientRect(),viewportState);
 }
 
+function getConnectTargetAt(clientX,clientY){
+    const element=document.elementFromPoint(clientX,clientY)?.closest?.(".node");
+    return element?nodes.find(node=>node.id===element.dataset.id)||null:null;
+}
+
+function updateConnectTarget(targetNode){
+    if(!connectGesture||connectGesture.targetNode?.id===targetNode?.id)return;
+    document.querySelectorAll(".node.connectTargetValid,.node.connectTargetInvalid")
+        .forEach(element=>element.classList.remove("connectTargetValid","connectTargetInvalid"));
+    connectGesture.targetNode=targetNode;
+    connectGesture.plan=targetNode?planConnectionBetween(connectGesture.sourceNode,targetNode):null;
+    connectGesture.preview.classList.toggle("invalid",Boolean(targetNode&&!connectGesture.plan?.ok));
+    if(!targetNode){
+        document.getElementById("statusBar").textContent=`Tarik koneksi dari ${connectGesture.sourceNode.text} ke device tujuan`;
+        return;
+    }
+    const targetElement=nodesLayer.querySelector(`.node[data-id="${CSS.escape(targetNode.id)}"]`);
+    targetElement?.classList.add(connectGesture.plan.ok?"connectTargetValid":"connectTargetInvalid");
+    document.getElementById("statusBar").textContent=connectGesture.plan.ok
+        ?`Release untuk menghubungkan ke ${targetNode.text}`
+        :getConnectionErrorMessage(connectGesture.plan.reason);
+}
+
+function startConnectGesture(e){
+    if(e.pointerType==="mouse"&&e.button!==0)return;
+    const sourceNode=nodes.find(node=>node.id===e.currentTarget.dataset.id);
+    if(!sourceNode)return;
+    e.preventDefault();
+    e.stopPropagation();
+    const preview=document.createElementNS(SVGNS,"path");
+    const center=findCenter(sourceNode.id);
+    preview.classList.add("connectPreview");
+    preview.setAttribute("d",`M ${center.x} ${center.y} L ${center.x} ${center.y}`);
+    linksLayer.appendChild(preview);
+    e.currentTarget.classList.add("connectSource");
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    connectGesture={
+        pointerId:e.pointerId,
+        sourceNode,
+        sourceElement:e.currentTarget,
+        preview,
+        startClient:{x:e.clientX,y:e.clientY},
+        moved:false,
+        targetNode:null,
+        plan:null
+    };
+    setInteractionState(InteractionState.CONNECTING_LINK);
+    document.getElementById("statusBar").textContent=`Tarik koneksi dari ${sourceNode.text} ke device tujuan`;
+}
+
+function moveConnectGesture(e){
+    if(!connectGesture||e.pointerId!==connectGesture.pointerId)return false;
+    const point=getViewportPoint(e),center=findCenter(connectGesture.sourceNode.id);
+    connectGesture.preview.setAttribute("d",`M ${center.x} ${center.y} L ${point.x} ${point.y}`);
+    if(Math.hypot(e.clientX-connectGesture.startClient.x,e.clientY-connectGesture.startClient.y)>6)connectGesture.moved=true;
+    updateConnectTarget(getConnectTargetAt(e.clientX,e.clientY));
+    e.preventDefault();
+    e.stopPropagation();
+    return true;
+}
+
+function endConnectGesture(e,cancelled=false){
+    if(!connectGesture||e.pointerId!==connectGesture.pointerId)return;
+    const gesture=connectGesture;
+    const targetNode=getConnectTargetAt(e.clientX,e.clientY);
+    const plan=targetNode?planConnectionBetween(gesture.sourceNode,targetNode):null;
+    const wasDrag=gesture.moved;
+    if(gesture.sourceElement.hasPointerCapture?.(e.pointerId)){
+        try{gesture.sourceElement.releasePointerCapture(e.pointerId);}catch(error){console.debug("Pointer capture already released",error);}
+    }
+    connectGesture=null;
+    clearConnectVisuals();
+    if(interactionState===InteractionState.CONNECTING_LINK)setInteractionState(InteractionState.IDLE);
+    if(cancelled){
+        if(wasDrag)showFeedback("Koneksi sementara dibatalkan");
+        return;
+    }
+    if(!wasDrag)return;
+    suppressCanvasClickUntil=Date.now()+500;
+    didDrag=false;
+    if(!targetNode){
+        showFeedback("Koneksi dibatalkan · lepaskan tepat di atas device tujuan",true);
+        return;
+    }
+    if(!plan.ok){
+        showFeedback(getConnectionErrorMessage(plan.reason),true);
+        return;
+    }
+    const result=createConnectionBetween(gesture.sourceNode,targetNode);
+    if(!result.ok){showFeedback(getConnectionErrorMessage(result.reason),true);return;}
+    firstLinkNode=null;
+    setLinkMode(false);
+    render();
+    saveToLocalStorage();
+    selectLinkById(result.link.id);
+    flashConnectionSuccess(gesture.sourceNode.id,targetNode.id);
+    showFeedback("Koneksi berhasil dibuat · port kosong pertama dipilih otomatis");
+}
+
 function startDrag(e){
 
     if(e.pointerType==="mouse" && e.button!==0) return;
@@ -2353,6 +2494,12 @@ function startDrag(e){
     if(readOnlyMode)return;
 
     if(interactionState!==InteractionState.IDLE)return;
+
+    if(linkMode){
+        if(firstLinkNode)return;
+        startConnectGesture(e);
+        return;
+    }
 
     e.preventDefault();
 
@@ -2387,6 +2534,8 @@ svg.addEventListener("contextmenu",function(e){
 
 });
 svg.addEventListener("pointermove",function(e){
+
+    if(moveConnectGesture(e))return;
 
     if(annotationDrag){moveAnnotation(e);return;}
 
@@ -2447,6 +2596,8 @@ function stopDrag(e){
 
 window.addEventListener("pointerup",stopDrag);
 window.addEventListener("pointercancel",stopDrag);
+window.addEventListener("pointerup",event=>endConnectGesture(event));
+window.addEventListener("pointercancel",event=>endConnectGesture(event,true));
 window.addEventListener("pointerup",stopWaypointDrag);
 window.addEventListener("pointercancel",stopWaypointDrag);
 window.addEventListener("pointerup",stopAnnotationDrag);
@@ -2903,7 +3054,7 @@ function loadLayout(data){
     globalDeviceScale=nextGlobalDeviceScale;
     defaultDeviceNameColor=nextDefaultDeviceNameColor;
     globalStatusTextSize=nextGlobalStatusTextSize;
-    selectedNode=null; selectedElement=null; selectedLink=null; selectedAnnotation=null; pendingAnnotation=null; contextTarget=null; firstLinkNode=null; linkMode=false;
+    selectedNode=null; selectedElement=null; selectedLink=null; selectedAnnotation=null; pendingAnnotation=null; contextTarget=null; firstLinkNode=null; setLinkMode(false);
     document.getElementById("propertyPanel").hidden=true;
     const cancelButton=document.getElementById("btnCancelLink");
     if(cancelButton) cancelButton.hidden=true;
@@ -3822,14 +3973,11 @@ btnSnap.onclick=function(){
 
 };
 btnAddLink.onclick=function(){
-
-    linkMode=true;
-
+    if(linkMode){cancelLinkMode();return;}
+    setLinkMode(true);
     firstLinkNode=null;
-    btnCancelLink.hidden=false;
-
     document.getElementById("statusBar").textContent=
-        "LINK MODE : pilih device pertama";
+        "CONNECT MODE · drag dari device sumber ke device tujuan (atau klik dua device)";
 
 };
 btnCancelLink.onclick=cancelLinkMode;
