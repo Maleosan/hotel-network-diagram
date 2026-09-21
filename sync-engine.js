@@ -10,7 +10,7 @@
         ["connection","links",item=>item.label||`${item.from||"?"} → ${item.to||"?"}`],
         ["annotation","annotations",item=>item.text||item.id]
     ];
-    const CONFIG_FIELDS=["diagramName","theme","gridEnabled","snapEnabled","background","globalDeviceScale","defaultDeviceNameColor","globalStatusTextSize","statusSummaryTypes"];
+    const CONFIG_FIELDS=["diagramName","theme","gridEnabled","snapEnabled","background","globalDeviceScale","defaultDeviceNameColor","globalStatusTextSize","deviceOutlineEnabled","statusSummaryTypes"];
 
     function clone(value){return value===undefined?null:JSON.parse(JSON.stringify(value));}
     function equal(a,b){return JSON.stringify(a===undefined?null:a)===JSON.stringify(b===undefined?null:b);}
